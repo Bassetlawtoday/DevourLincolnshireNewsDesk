@@ -1,0 +1,595 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "name": "Worksop Town",
+      "sport": "Football",
+      "organisation": "Worksop Town FC",
+      "listing_url": "https://worksoptownfc.com/news",
+      "article_link_selectors": [
+        ".card h2 a[href^='/news/']",
+        ".card a[href^='/news/']"
+      ],
+      "card_selectors": [
+        ".card"
+      ],
+      "date_selectors": [
+        ".card-body .text-muted",
+        ".small.text-muted"
+      ],
+      "include_url_patterns": [
+        "worksoptownfc\\.com/news/.+"
+      ],
+      "exclude_url_patterns": [
+        "/news/?$",
+        "/fixtures?/?$",
+        "/calendar",
+        "/teams?/",
+        "/tickets?",
+        "/hospitality",
+        "/sponsors?",
+        "/sponsorship",
+        "/shop",
+        "/contact",
+        "/club-info"
+      ],
+      "tags": [
+        "Worksop",
+        "Bassetlaw",
+        "Football"
+      ],
+      "max_stories": 25
+    },
+    {
+      "name": "Retford United",
+      "sport": "Football",
+      "organisation": "Retford United Football Club",
+      "listing_url": "https://retfordunitedfc.co.uk/news/",
+      "article_link_selectors": [
+        "article.ee-post a[href*='/news/']",
+        "article a[href*='/news/']"
+      ],
+      "card_selectors": [
+        "article.ee-post",
+        "article"
+      ],
+      "title_selectors": [
+        "h2",
+        "h3"
+      ],
+      "include_url_patterns": [
+        "retfordunitedfc\\.co\\.uk/news/.+"
+      ],
+      "exclude_url_patterns": [
+        "/news/?$",
+        "/about",
+        "/contact",
+        "/fixtures?",
+        "/tables?",
+        "/teams?",
+        "/shop",
+        "/membership",
+        "/sponsors?"
+      ],
+      "tags": [
+        "Retford",
+        "Bassetlaw",
+        "Football"
+      ],
+      "headers": {
+        "Referer": "https://retfordunitedfc.co.uk/",
+        "Accept-Language": "en-GB,en;q=0.9"
+      },
+      "publication_feed_url": "https://retfordunitedfc.co.uk/feed/",
+      "listing_warmup_url": "https://retfordunitedfc.co.uk/",
+      "max_stories": 20
+    },
+    {
+      "name": "Harworth Colliery",
+      "sport": "Football",
+      "organisation": "Harworth Colliery Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/harworthcollieryinstitute/",
+      "article_link_selectors": [
+        "a[href*='/news/'][href$='.html']"
+      ],
+      "card_selectors": [
+        "[class*='media-item__MediaContainer']"
+      ],
+      "include_url_patterns": [
+        "pitchero\\.com/news/.+\\.html"
+      ],
+      "exclude_url_patterns": [
+        "/news/?$",
+        "/teams?/",
+        "/matches?",
+        "/fixtures?",
+        "/tables?",
+        "/sponsors?",
+        "/contact",
+        "/login",
+        "/join",
+        "/photos?",
+        "/videos?",
+        "/media"
+      ],
+      "tags": [
+        "Harworth",
+        "Bircotes",
+        "Bassetlaw",
+        "Football"
+      ],
+      "max_stories": 20
+    },
+    {
+      "name": "Worksop Harriers Athletic Club",
+      "sport": "Athletics",
+      "organisation": "Worksop Harriers Athletic Club",
+      "listing_url": "https://worksopharriers.co.uk/blog",
+      "article_link_selectors": [
+        "article h2 a[href]",
+        "article h3 a[href]",
+        ".elementor-post__title a[href]",
+        ".entry-title a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "card_selectors": [
+        "article",
+        ".elementor-post",
+        ".post",
+        ".entry"
+      ],
+      "include_url_patterns": [
+        "worksopharriers\\.co\\.uk/.+"
+      ],
+      "exclude_url_patterns": [
+        "/blog/?$",
+        "/category/",
+        "/author/",
+        "/page/"
+      ],
+      "tags": [
+        "Running",
+        "Track and Field",
+        "Bassetlaw"
+      ],
+      "max_stories": 20
+    },
+    {
+      "name": "Nottingham Forest",
+      "sport": "Football",
+      "organisation": "Nottingham Forest Football Club",
+      "location": "Regional",
+      "listing_url": "https://www.nottinghamforest.co.uk/news/",
+      "include_url_patterns": ["nottinghamforest\\.co\\.uk/news/.+"],
+      "exclude_url_patterns": [
+        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
+        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
+        "/videos?", "/gallery"
+      ],
+      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
+      "tags": ["Nottingham", "Nottinghamshire", "East Midlands", "Regional", "Football"],
+      "content_api_url": "https://news.cms.web.gc.nffcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
+      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
+      "max_stories": 25
+    },
+    {
+      "name": "Notts County",
+      "sport": "Football",
+      "organisation": "Notts County Football Club",
+      "location": "Regional",
+      "listing_url": "https://www.nottscountyfc.co.uk/news/",
+      "include_url_patterns": ["nottscountyfc\\.co\\.uk/news/.+"],
+      "exclude_url_patterns": [
+        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
+        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
+        "/videos?", "/gallery"
+      ],
+      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
+      "tags": ["Nottingham", "Nottinghamshire", "East Midlands", "Regional", "Football"],
+      "content_api_url": "https://news.cms.web.gc.nottscountyfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
+      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
+      "max_stories": 25
+    },
+    {
+      "name": "Mansfield Town",
+      "sport": "Football",
+      "organisation": "Mansfield Town Football Club",
+      "location": "Regional",
+      "listing_url": "https://www.mansfieldtown.net/news/",
+      "include_url_patterns": ["mansfieldtown\\.net/news/.+"],
+      "exclude_url_patterns": [
+        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
+        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
+        "/videos?", "/gallery"
+      ],
+      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
+      "tags": ["Mansfield", "Nottinghamshire", "East Midlands", "Regional", "Football"],
+      "content_api_url": "https://news.cms.web.gc.mansfieldtownfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
+      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
+      "max_stories": 25
+    },
+    {
+      "name": "Sheffield United",
+      "sport": "Football",
+      "organisation": "Sheffield United Football Club",
+      "location": "Regional",
+      "listing_url": "https://www.sufc.co.uk/news/",
+      "include_url_patterns": ["sufc\\.co\\.uk/news/.+"],
+      "exclude_url_patterns": [
+        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
+        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
+        "/videos?", "/gallery"
+      ],
+      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
+      "tags": ["Sheffield", "South Yorkshire", "Regional", "Football"],
+      "content_api_url": "https://news.cms.web.gc.sufcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
+      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
+      "max_stories": 25
+    },
+    {
+      "name": "Sheffield Wednesday",
+      "sport": "Football",
+      "organisation": "Sheffield Wednesday Football Club",
+      "location": "Regional",
+      "listing_url": "https://www.swfc.co.uk/news/",
+      "include_url_patterns": ["swfc\\.co\\.uk/news/.+"],
+      "exclude_url_patterns": [
+        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
+        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
+        "/videos?", "/gallery"
+      ],
+      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
+      "tags": ["Sheffield", "South Yorkshire", "Regional", "Football"],
+      "content_api_url": "https://news.cms.web.gc.sheffieldwednesdayfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
+      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
+      "max_stories": 25
+    },
+    {
+      "name": "Doncaster Rovers",
+      "sport": "Football",
+      "organisation": "Doncaster Rovers Football Club",
+      "location": "Regional",
+      "listing_url": "https://www.doncasterroversfc.co.uk/news/",
+      "include_url_patterns": ["doncasterroversfc\\.co\\.uk/news/.+"],
+      "exclude_url_patterns": [
+        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
+        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
+        "/videos?", "/gallery"
+      ],
+      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
+      "tags": ["Doncaster", "South Yorkshire", "Regional", "Football"],
+      "content_api_url": "https://news.cms.web.gc.doncasterroversfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
+      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
+      "max_stories": 25
+    },
+    {
+      "name": "Bassetlaw Swim Squad",
+      "sport": "Swimming",
+      "organisation": "Bassetlaw Swim Squad",
+      "listing_url": "https://www.bassetlawswimsquad.org.uk/bss-events",
+      "article_link_selectors": [
+        "main a[href]",
+        "article a[href]",
+        "h2 a[href]",
+        "h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "bassetlawswimsquad\\.org\\.uk/"
+      ],
+      "exclude_url_patterns": [
+        "/meet-the-coaches",
+        "/about",
+        "/contact",
+        "\\.pdf($|\\?)"
+      ],
+      "exclude_title_patterns": [
+        "download",
+        "meet pack",
+        "home",
+        "current bss events",
+        "previous bss events"
+      ],
+      "tags": [
+        "Aquatics",
+        "Bassetlaw"
+      ],
+      "max_stories": 15,
+      "standalone_item_selectors": [
+        "main h1",
+        "main h2",
+        "main h3"
+      ]
+    },
+    {
+      "name": "Bassetlaw Bulldogs RLFC",
+      "sport": "Rugby League",
+      "organisation": "Bassetlaw Bulldogs RLFC",
+      "listing_url": "https://bassetlawbulldogs.co.uk/latest-news",
+      "article_link_selectors": [
+        "main a[href]",
+        "article a[href]",
+        "h2 a[href]",
+        "h3 a[href]",
+        "h4 a[href]"
+      ],
+      "include_url_patterns": [
+        "bassetlawbulldogs\\.co\\.uk/"
+      ],
+      "exclude_url_patterns": [
+        "/latest-news/?$",
+        "/membership",
+        "/club-shop",
+        "/privacy"
+      ],
+      "exclude_title_patterns": [
+        "download pdf",
+        "latest news",
+        "where and when",
+        "who and what",
+        "coaching team",
+        "why rugby league",
+        "where can i find more information"
+      ],
+      "tags": [
+        "Rugby",
+        "East Markham",
+        "Bassetlaw"
+      ],
+      "max_stories": 15,
+      "standalone_item_selectors": [
+        "main h2",
+        "main h3",
+        "main h4"
+      ]
+    },
+    {
+      "name": "Worksop RUFC",
+      "sport": "Rugby Union",
+      "organisation": "Worksop Rugby Union Football Club",
+      "listing_url": "https://worksoprufc.rfu.club/news",
+      "article_link_selectors": [
+        "article a[href]",
+        ".news a[href]",
+        ".news-item a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "worksoprufc\\.rfu\\.club/news/"
+      ],
+      "exclude_url_patterns": [
+        "/news/?$"
+      ],
+      "tags": [
+        "Rugby",
+        "Worksop",
+        "Bassetlaw"
+      ],
+      "max_stories": 15
+    },
+    {
+      "name": "Worksop Cricket Club",
+      "sport": "Cricket",
+      "organisation": "Worksop Cricket and Sports Club",
+      "listing_url": "https://worksopcricketandsportsclub.co.uk/cricket/",
+      "article_link_selectors": [
+        "article a[href]",
+        ".post a[href]",
+        ".blog a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "worksopcricketandsportsclub\\.co\\.uk/"
+      ],
+      "exclude_url_patterns": [
+        "/cricket/?$",
+        "/join",
+        "/about",
+        "/contact"
+      ],
+      "tags": [
+        "Worksop",
+        "Bassetlaw"
+      ],
+      "max_stories": 12,
+      "standalone_item_selectors": [
+        "main h2",
+        "main h3"
+      ]
+    },
+    {
+      "name": "Worksop Flat Green Bowls",
+      "sport": "Bowls",
+      "organisation": "Worksop Cricket and Sports Club",
+      "listing_url": "https://worksopcricketandsportsclub.co.uk/flat-green-bowls/",
+      "article_link_selectors": [
+        "article a[href]",
+        ".post a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "worksopcricketandsportsclub\\.co\\.uk/"
+      ],
+      "exclude_url_patterns": [
+        "/flat-green-bowls/?$",
+        "/join",
+        "/about",
+        "/contact"
+      ],
+      "tags": [
+        "Flat Green Bowls",
+        "Worksop",
+        "Bassetlaw"
+      ],
+      "max_stories": 10,
+      "standalone_item_selectors": [
+        "main h2",
+        "main h3"
+      ]
+    },
+    {
+      "name": "Worksop Crown Green Bowls",
+      "sport": "Bowls",
+      "organisation": "Worksop Cricket and Sports Club",
+      "listing_url": "https://worksopcricketandsportsclub.co.uk/crown-bowls/",
+      "article_link_selectors": [
+        "article a[href]",
+        ".post a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "worksopcricketandsportsclub\\.co\\.uk/"
+      ],
+      "exclude_url_patterns": [
+        "/crown-bowls/?$",
+        "/join",
+        "/about",
+        "/contact"
+      ],
+      "tags": [
+        "Crown Green Bowls",
+        "Worksop",
+        "Bassetlaw"
+      ],
+      "max_stories": 10,
+      "standalone_item_selectors": [
+        "main h2",
+        "main h3"
+      ]
+    },
+    {
+      "name": "Worksop Squash Club",
+      "sport": "Squash",
+      "organisation": "Worksop Cricket and Sports Club",
+      "listing_url": "https://worksopcricketandsportsclub.co.uk/",
+      "article_link_selectors": [
+        "a[href*='squash']",
+        "a[href*='racketball']"
+      ],
+      "include_url_patterns": [
+        "worksopcricketandsportsclub\\.co\\.uk/.+(squash|racketball)"
+      ],
+      "tags": [
+        "Racketball",
+        "Worksop",
+        "Bassetlaw"
+      ],
+      "max_stories": 10
+    },
+    {
+      "name": "Cuckney Cricket Club",
+      "sport": "Cricket",
+      "organisation": "Cuckney Cricket Club",
+      "listing_url": "https://cuckney.play-cricket.com/",
+      "article_link_selectors": [
+        "a[href*='/News/']",
+        "a[href*='/news/']",
+        "article a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "cuckney\\.play-cricket\\.com/(News|news)/"
+      ],
+      "tags": [
+        "Cuckney",
+        "Bassetlaw"
+      ],
+      "max_stories": 15
+    },
+    {
+      "name": "Ordsall Bridon Cricket Club",
+      "sport": "Cricket",
+      "organisation": "Ordsall Bridon Cricket Club",
+      "listing_url": "https://bridon.play-cricket.com/",
+      "article_link_selectors": [
+        "a[href*='/News/']",
+        "a[href*='/news/']",
+        "article a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "bridon\\.play-cricket\\.com/(News|news)/"
+      ],
+      "tags": [
+        "Ordsall",
+        "Retford",
+        "Bassetlaw"
+      ],
+      "max_stories": 15
+    },
+    {
+      "name": "Rockware Cricket Club",
+      "sport": "Cricket",
+      "organisation": "Rockware Cricket Club",
+      "listing_url": "https://rockware.play-cricket.com/",
+      "article_link_selectors": [
+        "a[href*='/News/']",
+        "a[href*='/news/']",
+        "article a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "rockware\\.play-cricket\\.com/(News|news)/"
+      ],
+      "tags": [
+        "Worksop",
+        "Bassetlaw"
+      ],
+      "max_stories": 15
+    },
+    {
+      "name": "Welbeck Cricket Club",
+      "sport": "Cricket",
+      "organisation": "Welbeck Cricket Club",
+      "listing_url": "https://welbeck.play-cricket.com/",
+      "article_link_selectors": [
+        "a[href*='/News/']",
+        "a[href*='/news/']",
+        "article a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "welbeck\\.play-cricket\\.com/(News|news)/"
+      ],
+      "tags": [
+        "Welbeck",
+        "Bassetlaw"
+      ],
+      "max_stories": 15
+    },
+    {
+      "name": "Bassetlaw District Sports Events",
+      "sport": "Community Sport",
+      "organisation": "Bassetlaw District Council",
+      "listing_url": "https://www.bassetlaw.gov.uk/sport-leisure-and-culture/leisure-and-well-being/sports-events/",
+      "article_link_selectors": [
+        "main a[href]",
+        "article a[href]",
+        "main h2 a[href]",
+        "main h3 a[href]"
+      ],
+      "include_url_patterns": [
+        "bassetlaw\\.gov\\.uk/sport-leisure-and-culture/"
+      ],
+      "exclude_url_patterns": [
+        "/sports-events/?$",
+        "/contact",
+        "/privacy",
+        "/accessibility"
+      ],
+      "tags": [
+        "Community Sport",
+        "Bassetlaw"
+      ],
+      "max_stories": 15
+    }
+  ]
+}

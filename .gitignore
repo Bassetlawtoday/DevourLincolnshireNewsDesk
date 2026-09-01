@@ -1,0 +1,78 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+data/facebook_posts.json
+data/facebook_tokens.json
+
+# Logs
+*.log
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# ------------------------------------
+# Devour Lincolnshire NewsDesk development
+# ------------------------------------
+
+# Backup source files
+*_backup_*.py
+*BACKUP*.py
+
+# ZIP archives
+*.zip
+
+# Temporary development folders
+newsdesk_scoring_stage1/
+
+# Test output (if you create any)
+htmlcov/
+.pytest_cache/
+.pytest-home-*/
+.coverage
+# Runtime cache
+cache/
+data/dashboard_state.json
+data/planning_results_cache.json
+data/planning_results_cache.backup.json
+
+# Temporary manual backups
+modules/dashboard_before_roadworks.py
+modules/fire_original.py
+
+# NewsDesk operational and editorial data
+data/newsletter/
+data/social/
+data/facebook_operations_state.json
+data/system_health_state.json
+exports/
+
+# Local backups and diagnostics
+archive/backups/
+config/*.bak
+*.diagnostic-backup-*
+*.transport-backup-*
+*_BACKUP.py
+*_backup.py
+
+# Additional isolated test homes
+
+# Retention audit data
+data/retention/

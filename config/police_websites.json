@@ -1,0 +1,83 @@
+{
+    "version":  1,
+    "sources":  [
+                    {
+                        "name":  "British Transport Police",
+                        "organisation":  "British Transport Police",
+                        "sport":  "Railway crime and appeals",
+                        "listing_url":  "https://www.btp.police.uk/news/news-search/?q=Lincolnshire",
+                        "article_link_selectors":  [
+                                                       "main h2 a[href]",
+                                                       "main h3 a[href]",
+                                                       "article a[href]",
+                                                       ".news-item a[href]"
+                                                   ],
+                        "card_selectors":  [
+                                               "article",
+                                               ".news-item",
+                                               ".card",
+                                               "li"
+                                           ],
+                        "include_url_patterns":  [
+                                                     "btp\\.police\\.uk/news/.+"
+                                                 ],
+                        "exclude_url_patterns":  [
+                                                     "/news/?$",
+                                                     "/news-search",
+                                                     "/contact",
+                                                     "/privacy",
+                                                     "/accessibility"
+                                                 ],
+                        "tags":  [
+                                     "Police",
+                                     "Railway"
+                                 ],
+                        "location":  "Regional",
+                        "max_stories":  30,
+                        "max_age_days":  14,
+                        "source_id":  "british_transport_police_lincolnshire",
+                        "module_profile":  "police",
+                        "geographic_filter":  "lincolnshire",
+                        "enabled":  true
+                    },
+                    {
+                        "name":  "CPS East Midlands",
+                        "organisation":  "Crown Prosecution Service East Midlands",
+                        "sport":  "Court outcomes and prosecutions",
+                        "listing_url":  "https://www.cps.gov.uk/east-midlands/news",
+                        "article_link_selectors":  [
+                                                       "main h2 a[href]",
+                                                       "main h3 a[href]",
+                                                       "article a[href]",
+                                                       ".views-row a[href]"
+                                                   ],
+                        "card_selectors":  [
+                                               "article",
+                                               ".views-row",
+                                               ".card",
+                                               "li"
+                                           ],
+                        "include_url_patterns":  [
+                                                     "cps\\.gov\\.uk/east-midlands/news/.+"
+                                                 ],
+                        "exclude_url_patterns":  [
+                                                     "/east-midlands/news/?$",
+                                                     "/contact",
+                                                     "/publications",
+                                                     "/newsletter"
+                                                 ],
+                        "tags":  [
+                                     "Police",
+                                     "Courts",
+                                     "CPS"
+                                 ],
+                        "location":  "East Midlands",
+                        "max_stories":  30,
+                        "max_age_days":  14,
+                        "source_id":  "cps_east_midlands_lincolnshire",
+                        "module_profile":  "police",
+                        "geographic_filter":  "lincolnshire",
+                        "enabled":  true
+                    }
+                ]
+}

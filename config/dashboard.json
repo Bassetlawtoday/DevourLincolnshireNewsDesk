@@ -1,0 +1,13 @@
+{
+  "module_policies": {
+    "planning": {"mode": "Off", "daily_time": "06:15"},
+    "police": {"mode": "Off"},
+    "fire": {"mode": "Off"},
+    "sport": {"mode": "Off"},
+    "council": {"mode": "Off"},
+    "government": {"mode": "Off"}
+  },
+  "refresh_on_startup": false,
+  "max_heavy_collectors": 2,
+  "government_range_hours": 48
+}

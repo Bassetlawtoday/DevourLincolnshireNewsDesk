@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="22" fill="#111827"/>
+  <path d="M15 18h10v92H15z" fill="#dc2626"/>
+  <text x="32" y="77" font-family="Arial, sans-serif" font-size="38" font-weight="700" fill="#f8fafc">NDP</text>
+</svg>

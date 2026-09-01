@@ -1,0 +1,47 @@
+{
+  "recency_days": 14,
+  "max_listing_pages": 3,
+  "request_timeout_seconds": 20,
+  "sources": [
+    {
+      "key": "bassetlaw_district_council",
+      "name": "Bassetlaw District Council",
+      "url": "https://www.bassetlaw.gov.uk/media-centre/news/latest-news/",
+      "enabled": true
+    },
+    {
+      "key": "nottinghamshire_county_council",
+      "name": "Nottinghamshire County Council",
+      "url": "https://newsroom.nottinghamshire.gov.uk/news/",
+      "enabled": true
+    },
+    {
+      "key": "east_midlands_cca",
+      "name": "East Midlands Combined County Authority",
+      "url": "https://www.eastmidlands-cca.gov.uk/news/",
+      "enabled": true
+    }
+  ],
+  "bassetlaw_locations": [
+    "Bassetlaw", "Worksop", "Retford", "Harworth", "Bircotes", "Misterton",
+    "Tuxford", "Carlton-in-Lindrick", "Carlton in Lindrick", "Langold", "Manton",
+    "Rhodesia", "Shireoaks", "Whitwell", "Creswell", "Blyth", "Ranskill",
+    "Mattersey", "Everton", "Gringley-on-the-Hill", "Gringley on the Hill",
+    "Walkeringham", "Beckingham", "Misson", "North Leverton", "South Leverton",
+    "East Markham", "West Stockwith", "North Wheatley", "Sturton le Steeple",
+    "Clarborough", "Hayton", "Babworth", "Elkesley", "Gamston", "West Drayton",
+    "West Burton", "Cottam", "Clumber Park", "Welbeck"
+  ],
+  "ambiguous_locations": ["Everton", "Gamston"],
+  "high_local_importance_terms": [
+    "across nottinghamshire", "county-wide", "countywide", "all nottinghamshire",
+    "local government reorganisation", "north nottinghamshire", "a614", "a1",
+    "bus service", "bus travel", "bus fares", "rail service", "adult social care", "children's services",
+    "school transport", "skills programme", "employment programme",
+    "regional investment", "available across nottinghamshire"
+  ],
+  "outside_district_terms": [
+    "Derby", "Derbyshire", "Leicester", "Leicestershire", "Nottingham city",
+    "Rushcliffe", "Ashfield", "Mansfield", "Broxtowe", "Gedling", "Newark"
+  ]
+}

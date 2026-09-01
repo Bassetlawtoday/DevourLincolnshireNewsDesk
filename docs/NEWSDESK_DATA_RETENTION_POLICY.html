@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NewsDesk Pro Data Retention Policy</title>
+<style>body{font:16px/1.55 Arial,sans-serif;color:#172033;max-width:1100px;margin:40px auto;padding:0 28px}h1,h2{color:#0f172a}table{border-collapse:collapse;width:100%;font-size:14px}th,td{border:1px solid #b7c0cc;padding:9px;text-align:left;vertical-align:top}th{background:#e8edf3}code{background:#eef2f6;padding:2px 4px}.meta{color:#4b5563}.notice{border-left:5px solid #dc2626;padding:10px 16px;background:#f8fafc}@media print{body{margin:0;max-width:none}.notice{break-inside:avoid}}</style></head>
+<body><h1>NewsDesk Pro Data Retention Policy</h1>
+<p class="meta"><strong>Owner:</strong> Devour Lincolnshire · <strong>System:</strong> NewsDesk Pro · <strong>Version:</strong> 1.2 — 31 August 2026 · <strong>Review:</strong> annually and after material change</p>
+<p class="notice">This policy explains what the newsroom system stores, where, why, for how long, and how it is disposed of. It is an operational policy; seek professional advice where formal legal assurance is required.</p>
+<h2>Purpose and scope</h2><p>NewsDesk Pro is an internal editorial research and production system covering Planning, Police, Fire, Sport, Council, Events, Local Democracy Intelligence and Social Desk. Information is used only for legitimate newsroom discovery, verification, analysis, selection, production, provenance and publication, subject to source licences, copyright, data-protection law, journalism protections and the public interest.</p>
+<h2>Storage and retention schedule</h2>
+<table><thead><tr><th>Information and location</th><th>Purpose</th><th>Retention</th></tr></thead><tbody>
+<tr><td>Local Democracy metadata — <code>data\contentdesk\contentdesk.sqlite</code></td><td>Search and aggregate analysis</td><td>12 months; then delete unless newsletter-selected</td></tr>
+<tr><td>Local Democracy full text, image details and working media</td><td>Review, copying and newsletter selection</td><td>90 days; then minimise unless newsletter-selected</td></tr>
+<tr><td>LDRS author/reviewer emails</td><td>Not required by NewsDesk Pro</td><td>Not retained; removed on every run</td></tr>
+<tr><td>Events — <code>data\eventsdesk\eventsdesk.sqlite</code></td><td>Discovery, verification and selection</td><td>Expired event plus 90 days unless newsletter-selected</td></tr>
+<tr><td>Planning — <code>data\newsdesk.db</code></td><td>Monitoring and research</td><td>Active while needed; concluded records reviewed/removed after 12 months</td></tr>
+<tr><td>Police, Fire, Sport and Council results</td><td>Current monitoring</td><td>Current application session unless newsletter-selected</td></tr>
+<tr><td>Social Desk drafts — <code>data\social\drafts.json</code></td><td>Prepare and review posts before transfer to Metricool</td><td>Unsubmitted drafts: 90 days; Metricool delivery references: 12 months</td></tr>
+<tr><td>Metricool settings — <code>data\social\metricool.json</code></td><td>Identify the selected Metricool user and brand</td><td>While active; API token encrypted for the signed-in Windows user</td></tr>
+<tr><td>Newsletter editions, selected copy, provenance and approved images — <code>data\newsletter</code></td><td>Production, rights evidence, corrections and publication archive</td><td>Permanent editorial archive unless authorised otherwise</td></tr>
+<tr><td>Temporary images — <code>cache\images</code></td><td>Display and processing</td><td>14 days</td></tr>
+<tr><td>Logs — <code>logs</code></td><td>Fault diagnosis and accountability</td><td>30 days</td></tr>
+<tr><td>Cleanup audit — <code>data\retention\cleanup_audit.jsonl</code></td><td>Evidence that policy ran</td><td>Permanent non-content compliance record</td></tr>
+<tr><td>Backups — <code>archive\backups</code></td><td>Recovery</td><td>Quarterly review; delete obsolete copies</td></tr>
+</tbody></table>
+<h2>Safeguards</h2><ol><li>Only necessary fields are retained; unnecessary LDRS contact emails are removed.</li><li>Newsletter-selected material is protected from automatic source-record deletion.</li><li>Abandoned drafts are reviewed after 90 days and are not silently deleted.</li><li>Non-identifying aggregate totals may outlive source detail if they cannot reconstruct content or identify a person.</li><li>Retention does not grant republication rights; licence, embargo, caption, credit and permission terms still apply.</li><li>Credentials and local source data are excluded from Git; access is restricted to authorised users.</li><li>Corrections, takedowns and rights changes must be applied promptly.</li></ol>
+<h2>Operation and accountability</h2><p>Retention runs on application startup and on demand from the Data Retention Centre. Each run records its time, policy version, outcome and action counts without copying article content into the audit. The editor/data controller reviews legal holds, rights changes, requests, exceptions and backups. A legal hold must record its reason, scope, approver and review date.</p>
+<h2>Availability</h2><p>The installed shareable copy is <code>docs\NEWSDESK_DATA_RETENTION_POLICY.html</code>; the controlled text is <code>docs\NEWSDESK_DATA_RETENTION_POLICY.md</code>. The dashboard can open this document at any time for printing or supply to an appropriate requester.</p></body></html>

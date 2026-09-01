@@ -1,0 +1,195 @@
+{
+    "version": "3.1.2",
+    "thresholds": {
+        "front_page": 80,
+        "high_priority": 60,
+        "newsworthy": 35,
+        "monitor": 20
+    },
+    "zones": {
+        "bassetlaw": {
+            "label": "Bassetlaw",
+            "score": 60,
+            "places": [
+                "Bassetlaw",
+                "Worksop",
+                "Retford",
+                "Harworth",
+                "Bircotes",
+                "Harworth and Bircotes",
+                "Carlton-in-Lindrick",
+                "Langold",
+                "Misterton",
+                "Shireoaks",
+                "Blyth",
+                "Tuxford",
+                "Rhodesia",
+                "Gateford",
+                "Manton",
+                "Beckingham",
+                "Walkeringham",
+                "Everton",
+                "Mattersey",
+                "Ranskill",
+                "Rampton",
+                "Bole",
+                "Clarborough",
+                "Hayton",
+                "Gamston",
+                "Elkesley",
+                "Barnby Moor",
+                "Scrooby",
+                "Sutton cum Lound",
+                "Sturton le Steeple",
+                "Saundby",
+                "Babworth",
+                "Cuckney",
+                "Welbeck",
+                "Gringley on the Hill",
+                "Dunham-on-Trent",
+                "North Leverton",
+                "South Leverton",
+                "East Markham",
+                "West Markham"
+            ]
+        },
+        "surrounding": {
+            "label": "Surrounding Area",
+            "score": 20,
+            "places": [
+                "Newark",
+                "Newark-on-Trent",
+                "Mansfield",
+                "Warsop",
+                "Ollerton",
+                "Edwinstowe",
+                "Southwell",
+                "Dinnington",
+                "Doncaster",
+                "Gainsborough",
+                "Rotherham",
+                "Chesterfield"
+            ]
+        },
+        "county": {
+            "label": "Wider Nottinghamshire",
+            "score": 5,
+            "places": [
+                "Nottingham",
+                "Arnold",
+                "Beeston",
+                "West Bridgford",
+                "Hucknall",
+                "Kimberley",
+                "Eastwood",
+                "Sutton-in-Ashfield",
+                "Kirkby-in-Ashfield"
+            ]
+        }
+    },
+    "global_signals": {
+        "fatal": 35,
+        "murder": 35,
+        "terror": 35,
+        "counter terrorism": 35,
+        "missing child": 35,
+        "firearm": 25,
+        "major investigation": 25,
+        "serious collision": 25,
+        "appeal": 20,
+        "witness": 15,
+        "cctv": 15,
+        "charged": 15,
+        "jailed": 15,
+        "sentenced": 15,
+        "court": 10,
+        "drugs": 10,
+        "cannabis": 10,
+        "fraud": 10,
+        "burglary": 10,
+        "robbery": 15,
+        "knife": 15,
+        "officer misconduct": 25
+    },
+    "module_profiles": {
+        "default": {
+            "inherit_global_signals": true,
+            "zone_scores": {
+                "bassetlaw": 60,
+                "surrounding": 20,
+                "county": 5,
+                "other": 0
+            },
+            "thresholds": {
+                "front_page": 80,
+                "high_priority": 60,
+                "newsworthy": 35,
+                "monitor": 20
+            },
+            "signals": {}
+        },
+        "police": {
+            "inherit_global_signals": true,
+            "zone_scores": {
+                "bassetlaw": 70,
+                "surrounding": 20,
+                "county": 5,
+                "other": 0
+            },
+            "thresholds": {
+                "front_page": 80,
+                "high_priority": 60,
+                "newsworthy": 35,
+                "monitor": 20
+            },
+            "signals": {
+                "public appeal": 15,
+                "named suspect": 10,
+                "image available": 10,
+                "repeat offender": 10,
+                "large seizure": 15
+            }
+        },
+        "planning": {
+            "inherit_global_signals": false,
+            "zone_scores": {
+                "bassetlaw": 10,
+                "surrounding": 5,
+                "county": 2,
+                "other": 0
+            },
+            "thresholds": {
+                "front_page": 45,
+                "high_priority": 35,
+                "newsworthy": 25,
+                "monitor": 10
+            },
+            "signals": {
+                "major housing": 25,
+                "very large housing": 40,
+                "battery storage": 25,
+                "energy storage": 25,
+                "bess": 25,
+                "solar farm": 20,
+                "solar": 15,
+                "renewable": 15,
+                "listed building": 20,
+                "heritage": 15,
+                "conservation area": 15,
+                "employment site": 20,
+                "employment": 15,
+                "industrial": 15,
+                "warehouse": 15,
+                "retail": 10,
+                "telecommunications": 10,
+                "telecom": 10,
+                "mast": 10,
+                "5g": 10,
+                "school": 15,
+                "care home": 15,
+                "hotel": 15,
+                "demolition": 10
+            }
+        }
+    }
+}
