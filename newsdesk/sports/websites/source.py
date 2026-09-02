@@ -16,9 +16,9 @@ class WebsiteSource:
 
     enabled: bool = True
     organisation: str = ""
-    location: str = "Bassetlaw"
+    location: str = "Lincolnshire"
     max_stories: int = 20
-    timeout: float = 30.0
+    timeout: float = 12.0
     request_delay: float = 0.0
     same_domain_only: bool = True
 
@@ -43,7 +43,7 @@ class WebsiteSource:
         self.sport = str(self.sport or "Sport").strip() or "Sport"
         self.listing_url = str(self.listing_url or "").strip()
         self.organisation = str(self.organisation or self.name).strip()
-        self.location = str(self.location or "Bassetlaw").strip()
+        self.location = str(self.location or "Lincolnshire").strip()
         self.max_stories = int(self.max_stories)
         self.timeout = float(self.timeout)
         self.request_delay = float(self.request_delay)

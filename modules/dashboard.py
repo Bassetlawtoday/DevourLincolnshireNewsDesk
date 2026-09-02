@@ -585,6 +585,15 @@ class Dashboard(ctk.CTkFrame):
                 text="Completed — cached Planning data available",
                 text_color=SUCCESS,
             )
+        for key in ("police", "fire", "sport", "council"):
+            cached_feed = self.result_repository.get_result(key)
+            if cached_feed is None:
+                continue
+            count = len(cached_feed.payload.get("stories") or [])
+            widgets = self.card_widgets[key]
+            widgets["count"].configure(text=f"{count} stories")
+            widgets["status"].configure(text="Completed — saved feed available", text_color=SUCCESS)
+            widgets["updated"].configure(text=f"Last updated: {cached_feed.completed_at.astimezone().strftime('%d %b %H:%M')}")
 
     def _updates_label(self, count, updates_date, tracking_started_at):
         today = datetime.now().astimezone().date()

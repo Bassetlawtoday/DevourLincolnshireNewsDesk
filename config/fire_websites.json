@@ -1,4 +1,27 @@
 {
   "version": 1,
-  "sources": []
+  "sources": [
+    {
+      "name": "Humberside Fire - News",
+      "organisation": "Humberside Fire and Rescue Service",
+      "sport": "Fire and rescue news",
+      "listing_url": "https://humbersidefire.gov.uk/newsroom/news",
+      "article_link_selectors": ["a.news-featured-articles-article[href]", "a.older-article[href]"],
+      "card_selectors": ["a.news-featured-articles-article", "a.older-article"],
+      "title_selectors": [".news-featured-articles-article-title", ".older-article-details-title"],
+      "summary_selectors": [".news-featured-articles-article-intro", "p"],
+      "date_selectors": [".news-featured-articles-article-post-date", ".older-article-details-post-date"],
+      "image_selectors": ["img[src]"],
+      "include_url_patterns": ["humbersidefire\\.gov\\.uk/newsroom/news/.+"],
+      "exclude_url_patterns": ["/news/?$", "/contact", "/privacy", "/accessibility"],
+      "tags": ["Fire and Rescue", "Service News"],
+      "location": "Northern Lincolnshire",
+      "max_stories": 30,
+      "max_age_days": 14,
+      "source_id": "humberside_fire_news_lincolnshire",
+      "module_profile": "fire",
+      "geographic_filter": "lincolnshire",
+      "enabled": true
+    }
+  ]
 }

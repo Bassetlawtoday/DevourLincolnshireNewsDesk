@@ -7,6 +7,17 @@ from typing import Iterable
 from .models import EventRecord, slug_text
 
 
+def _content_length(value: str | None) -> int:
+    return len(" ".join((value or "").split()))
+
+
+def _bad_image(value: str | None) -> bool:
+    text = (value or "").casefold()
+    return any(token in text for token in (
+        "certificate", "age-rating", "rating-icon", "placeholder", "spinner", "favicon",
+    ))
+
+
 def _similar(a: str | None, b: str | None) -> float:
     return SequenceMatcher(None, slug_text(a), slug_text(b)).ratio()
 
@@ -42,6 +53,10 @@ def _merge(best: EventRecord, other: EventRecord) -> EventRecord:
     for field in fields:
         if getattr(best, field) in (None, "") and getattr(other, field) not in (None, ""):
             setattr(best, field, getattr(other, field))
+    if _content_length(other.description) >= _content_length(best.description) + 80:
+        best.description = other.description
+    if other.image_url and (not best.image_url or (_bad_image(best.image_url) and not _bad_image(other.image_url))):
+        best.image_url = other.image_url
     sources = best.raw.setdefault("merged_sources", [])
     if other.source not in sources:
         sources.append(other.source)

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any
+from urllib.parse import urljoin
 
 from newsdesk.publish_result import PublishResult
 from newsdesk.services.image_service import ImageService
@@ -20,10 +21,12 @@ from newsdesk.sources.fire_scraper import (
     DEFAULT_MAX_AGE_DAYS,
     FUTURE_ALLOWANCE_HOURS,
     FireScraper,
+    HumbersideFireIncidentScraper,
     _fire_recency_rejection_reason,
 )
 from newsdesk.story import Story
 from newsdesk.sources.managed_websites import collect_managed_websites
+from newsdesk.sources.article_scraper import ArticleScraper
 
 
 FireScraperFactory = Callable[[], Any]
@@ -112,11 +115,18 @@ class FireCollectionService:
             image_service = self.image_service_factory()
 
             collected_stories = list(scraper.fetch_latest_news())
+            try:
+                humberside_scraper = HumbersideFireIncidentScraper()
+                collected_stories.extend(humberside_scraper.fetch_latest_news())
+            except Exception as error:
+                result.errors.append(f"Humberside Fire incidents: {error}")
             managed_stories, managed_errors = collect_managed_websites("fire")
+            for story in managed_stories:
+                self._enrich_managed_story(story, result)
             collected_stories.extend(managed_stories)
             result.errors.extend(managed_errors)
             stories = self._filter_recent_stories(
-                collected_stories,
+                self._deduplicate_stories(collected_stories),
                 stage="collection-service-final",
             )
             result.stories = stories
@@ -149,6 +159,84 @@ class FireCollectionService:
                         # Collection has already completed or raised its
                         # original error. Cleanup must not hide that error.
                         pass
+
+    @staticmethod
+    def _deduplicate_stories(stories: list[Story]) -> list[Story]:
+        """Remove cross-source duplicates while retaining the richest copy."""
+
+        retained: dict[str, Story] = {}
+        order: list[str] = []
+        for story in stories:
+            extras = getattr(story, "extras", {}) or {}
+            incident_number = str(extras.get("incident_number", "") or "").strip()
+            normalised_url = re.sub(
+                r"[#?].*$", "", str(story.url or "").strip().casefold()
+            ).rstrip("/")
+            normalised_title = re.sub(
+                r"[^a-z0-9]+", " ", str(story.title or "").casefold()
+            ).strip()
+            key = (
+                f"incident:{story.source.casefold()}:{incident_number}"
+                if incident_number
+                else normalised_url or normalised_title
+            )
+            if not key:
+                continue
+            existing = retained.get(key)
+            if existing is None:
+                retained[key] = story
+                order.append(key)
+                continue
+            existing_size = len(str(existing.body or existing.summary or ""))
+            candidate_size = len(str(story.body or story.summary or ""))
+            if candidate_size > existing_size:
+                retained[key] = story
+        return [retained[key] for key in order]
+
+    @staticmethod
+    def _enrich_managed_story(story: Story, result: FireCollectionResult) -> None:
+        """Fetch complete Humberside articles selected by the listing collector."""
+
+        url = str(story.url or "").strip()
+        if "humbersidefire.gov.uk/newsroom/news/" not in url.casefold():
+            return
+        scraper = ArticleScraper(timeout=30.0)
+        try:
+            article = scraper.extract_article(
+                url,
+                body_selector=".news-detail .col-md-8",
+                image_selector=".news-page-thumb-image img[src], .news-detail img[src]",
+            )
+            text = str(article.get("text") or "").strip()
+            if len(text) > len(str(story.body or story.summary or "")):
+                story.body = text
+            image = str(article.get("image") or "").strip()
+            if image:
+                story.image_url = image
+                story.image_credit = "Humberside Fire and Rescue Service"
+
+            soup = article.get("soup")
+            content = soup.select_one(".news-detail .col-md-8") if soup else None
+            links: list[str] = []
+            if content is not None:
+                for anchor in content.select("a[href]"):
+                    href = urljoin(url, str(anchor.get("href") or "").strip())
+                    label = " ".join(anchor.get_text(" ", strip=True).split())
+                    if not href.startswith(("http://", "https://")):
+                        continue
+                    rendered = f"{label}: {href}" if label else href
+                    if rendered not in links:
+                        links.append(rendered)
+            if links:
+                link_block = "\n".join(links)
+                if link_block not in story.body:
+                    story.body = f"{story.body.rstrip()}\n\nUseful links\n{link_block}".strip()
+                story.extras["embedded_links"] = links
+            story.extras["full_article_downloaded"] = True
+        except Exception as error:
+            result.errors.append(f"{story.title or url}: full article: {error}")
+        finally:
+            scraper.close()
 
     @staticmethod
     def _filter_recent_stories(

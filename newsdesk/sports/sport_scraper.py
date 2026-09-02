@@ -11,6 +11,7 @@ separate scraper classes and registered with SportScraper.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -22,11 +23,12 @@ from urllib.parse import urlparse
 from newsdesk.publish_result import PublishResult
 from newsdesk.story import Story
 from newsdesk.story_engine import StoryEngine
+from newsdesk.geography.lincolnshire import story_matches_lincolnshire
 
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_MAX_AGE_DAYS = 3
+DEFAULT_MAX_AGE_DAYS = 7
 
 
 @dataclass(slots=True)
@@ -39,6 +41,17 @@ class SportSourceError:
 
 
 @dataclass(slots=True)
+class SportSourceOutcome:
+    """Yield and health of one configured source in the latest run."""
+
+    source_name: str
+    scraper_name: str
+    status: str
+    story_count: int = 0
+    message: str = ""
+
+
+@dataclass(slots=True)
 class SportScrapeReport:
     """Summary of the most recent SportDesk collection run."""
 
@@ -47,6 +60,7 @@ class SportScrapeReport:
     stories_found: int = 0
     stories_returned: int = 0
     errors: list[SportSourceError] = field(default_factory=list)
+    outcomes: list[SportSourceOutcome] = field(default_factory=list)
     started_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -86,7 +100,10 @@ class SportScraper:
         *,
         engine: StoryEngine | None = None,
     ) -> None:
-        self.engine = engine or StoryEngine()
+        self.engine = engine or StoryEngine(
+            strict_validation=False,
+            strict_formatting=False,
+        )
         self._sources: list[Any] = []
         self._stories: list[Story] = []
         self._results: list[PublishResult] = []
@@ -173,43 +190,103 @@ class SportScraper:
         collected: list[Story] = []
 
         try:
-            for scraper in self._sources:
-                source_name = self._source_name(scraper)
-
-                try:
-                    stories = self._collect_source(
+            worker_count = min(12, max(1, len(self._sources)))
+            with ThreadPoolExecutor(
+                max_workers=worker_count,
+                thread_name_prefix="sport-source",
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        self._collect_source,
                         scraper,
                         refresh=refresh,
                         deduplicate=deduplicate,
-                    )
+                    ): scraper
+                    for scraper in self._sources
+                }
 
-                    for story in stories:
-                        self._apply_sport_metadata(
-                            story,
-                            source_name=source_name,
-                            scraper=scraper,
+                for future in as_completed(futures):
+                    scraper = futures[future]
+                    source_name = self._source_name(scraper)
+
+                    try:
+                        stories = future.result()
+
+                        if self._requires_lincolnshire_filter(scraper):
+                            retained = []
+                            for story in stories:
+                                match = story_matches_lincolnshire(story)
+                                if not match.matched:
+                                    continue
+                                story.extras.setdefault(
+                                    "geographic_filter", "lincolnshire"
+                                )
+                                story.extras.setdefault(
+                                    "geographic_matches", list(match.places)
+                                )
+                                retained.append(story)
+                            stories = retained
+
+                        for story in stories:
+                            self._apply_sport_metadata(
+                                story,
+                                source_name=source_name,
+                                scraper=scraper,
+                            )
+                            story.extras.setdefault(
+                                "collector_route",
+                                str(
+                                    getattr(scraper, "definition", None).metadata.get(
+                                        "collector_route", "specialist"
+                                    )
+                                    if getattr(scraper, "definition", None) is not None
+                                    else "specialist"
+                                ),
+                            )
+
+                        collected.extend(stories)
+                        report.sources_completed += 1
+                        report.stories_found += len(stories)
+                        report.outcomes.append(
+                            SportSourceOutcome(
+                                source_name=source_name,
+                                scraper_name=type(scraper).__name__,
+                                status="yielding" if stories else "no-stories",
+                                story_count=len(stories),
+                                message=(
+                                    "Stories collected."
+                                    if stories
+                                    else "Source reached successfully; no stories were accepted."
+                                ),
+                            )
                         )
 
-                    collected.extend(stories)
-                    report.sources_completed += 1
-                    report.stories_found += len(stories)
-
-                except Exception as error:
-                    LOGGER.exception(
-                        "Could not collect sports stories from %s.",
-                        source_name,
-                    )
-
-                    report.errors.append(
-                        SportSourceError(
-                            source_name=source_name,
-                            scraper_name=type(scraper).__name__,
-                            message=str(error),
+                    except Exception as error:
+                        LOGGER.exception(
+                            "Could not collect sports stories from %s.",
+                            source_name,
                         )
-                    )
 
-                    if not continue_on_error:
-                        raise
+                        report.errors.append(
+                            SportSourceError(
+                                source_name=source_name,
+                                scraper_name=type(scraper).__name__,
+                                message=str(error),
+                            )
+                        )
+                        report.outcomes.append(
+                            SportSourceOutcome(
+                                source_name=source_name,
+                                scraper_name=type(scraper).__name__,
+                                status="failed",
+                                message=str(error),
+                            )
+                        )
+
+                        if not continue_on_error:
+                            for pending in futures:
+                                pending.cancel()
+                            raise
 
             if deduplicate:
                 collected = self._deduplicate_stories(collected)
@@ -272,10 +349,10 @@ class SportScraper:
         *,
         now: datetime | None = None,
         stage: str = "sport-orchestration",
+        require_date: bool = False,
     ) -> list[Story]:
         candidates = list(stories)
         current_time = cls._aware_utc(now or datetime.now(timezone.utc))
-        cutoff = current_time - timedelta(days=cls._max_age_days())
         future_limit = current_time + timedelta(hours=24)
         kept: list[Story] = []
 
@@ -285,22 +362,16 @@ class SportScraper:
             reason = cls._recency_rejection_reason(
                 raw_published=raw_published,
                 parsed_published=parsed_published,
-                cutoff=cutoff,
                 future_limit=future_limit,
+                max_age_days=cls._max_age_days(),
+                require_date=require_date,
             )
-
-            if (
-                reason == "missing-publication-date"
-                and cls._is_undated_standalone_story(story)
-            ):
-                kept.append(story)
-                continue
 
             if reason:
                 LOGGER.debug(
                     "Rejected sport story title=%r source=%r "
                     "raw publication date=%r parsed publication date=%s "
-                    "cutoff date=%s pipeline stage=%s reason=%s",
+                    "pipeline stage=%s reason=%s",
                     story.title,
                     story.source,
                     raw_published,
@@ -309,7 +380,6 @@ class SportScraper:
                         if parsed_published is not None
                         else "unavailable"
                     ),
-                    cutoff.isoformat(),
                     stage,
                     reason,
                 )
@@ -318,7 +388,7 @@ class SportScraper:
             kept.append(story)
 
         LOGGER.info(
-            "Global sport recency filter at %s: kept %d of %d stories; "
+            "Global sport date-safety filter at %s: kept %d of %d stories; "
             "rejected %d.",
             stage,
             len(kept),
@@ -328,7 +398,7 @@ class SportScraper:
         return kept
 
     @classmethod
-    def _max_age_days(cls) -> int:
+    def _max_age_days(cls) -> int | None:
         return DEFAULT_MAX_AGE_DAYS
 
     @staticmethod
@@ -336,17 +406,20 @@ class SportScraper:
         *,
         raw_published: object,
         parsed_published: datetime | None,
-        cutoff: datetime,
         future_limit: datetime,
+        max_age_days: int | None,
+        require_date: bool = False,
     ) -> str:
         if raw_published is None or not str(raw_published).strip():
-            return "missing-publication-date"
+            return "story-date-missing" if require_date else ""
         if parsed_published is None:
-            return "invalid-publication-date"
-        if parsed_published < cutoff:
-            return "story-too-old"
+            return "story-date-invalid" if require_date else ""
         if parsed_published > future_limit:
             return "story-date-in-future"
+        if max_age_days is not None:
+            cutoff = future_limit - timedelta(hours=24, days=max_age_days)
+            if parsed_published < cutoff:
+                return "story-older-than-seven-days"
         return ""
 
     @classmethod
@@ -490,6 +563,16 @@ class SportScraper:
                     }
                     for error in report.errors
                 ],
+                "outcomes": [
+                    {
+                        "source_name": outcome.source_name,
+                        "scraper_name": outcome.scraper_name,
+                        "status": outcome.status,
+                        "story_count": outcome.story_count,
+                        "message": outcome.message,
+                    }
+                    for outcome in report.outcomes
+                ],
             },
         }
 
@@ -536,6 +619,20 @@ class SportScraper:
         ).strip()
 
         return value or type(scraper).__name__
+
+    @staticmethod
+    def _requires_lincolnshire_filter(scraper: Any) -> bool:
+        """Apply the shared county boundary to broad regional/national feeds."""
+
+        definition = getattr(scraper, "definition", None)
+        metadata = getattr(definition, "metadata", {}) or {}
+        configured = str(metadata.get("geographic_filter", "")).casefold()
+        if configured in {"lincolnshire", "lincolnshire-strict"}:
+            return True
+
+        # BBC sport feeds are national. Retaining them without a county match
+        # overwhelms local club and governing-body reporting.
+        return type(scraper).__name__.startswith("BBC")
 
     @staticmethod
     def _apply_sport_metadata(

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from tkinter import messagebox
 
 from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
-from newsdesk.social.text import clean_social_text
+from newsdesk.social.text import clean_social_text, repair_ldrs_draft
 
 
 def _rights_status(image_url: str, credit: str, module_key: str) -> str:
@@ -27,16 +27,16 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
     """Stage a Story directly in Social Desk without using Newsletter Desk."""
 
     title = str(getattr(story, "title", "") or "").strip()
+    source_url = str(getattr(story, "url", "") or "").strip()
     text = clean_social_text(
         getattr(story, "body", "") or getattr(story, "summary", ""),
-        source_url=str(getattr(story, "url", "") or "").strip(),
+        source_url=source_url,
     )
     author = str(getattr(story, "author", "") or "").strip()
     if module_key == "police" and author:
         attribution = f"Posted by {author}"
         if attribution.casefold() not in text.casefold():
             text = f"{text}\n\n{attribution}".strip()
-    source_url = str(getattr(story, "url", "") or "").strip()
     image_url = _real_image(getattr(story, "image_url", ""))
     image_caption = str(getattr(story, "image_caption", "") or getattr(story, "image_alt_text", "") or "").strip() if image_url else ""
     image_credit = str(getattr(story, "image_credit", "") or "").strip() if image_url else ""
@@ -55,6 +55,12 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
     draft.title = title
     draft.text = text
     draft.source_url = source_url
+    # LDRS Content Explorer URLs require newsroom authentication and are not
+    # suitable public links. Keep them for provenance/deduplication only.
+    draft.include_source_url = module_key != "content"
+    if module_key == "content":
+        draft.internal_source_url = source_url
+        draft.source_url = ""
     draft.image_url = image_url
     draft.image_caption = image_caption
     draft.image_credit = image_credit
@@ -73,6 +79,8 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
         "sport": "Sport draft",
         "council": "Council draft",
     }.get(module_key, "Blank social draft")
+    if module_key == "content":
+        repair_ldrs_draft(draft)
     draft.updated_at = datetime.now().astimezone().isoformat()
     if not existed:
         drafts.append(draft)

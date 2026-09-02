@@ -16,14 +16,9 @@ import customtkinter as ctk
 from newsdesk.action_bar import NewsDeskActionBar
 from newsdesk.display_dates import format_uk_date
 from newsdesk.image_preview_cache import IMAGE_PREVIEW_CACHE
-from newsdesk.services.council_service import (
-    CouncilCollectionService,
-    HIGH_LOCAL_IMPORTANCE,
-    LOCAL,
-    PRIORITY_ORDER,
-    REVIEW,
-    TOP_PRIORITY,
-)
+from newsdesk.services.council_service import CouncilCollectionService
+from newsdesk.feed_policy import prepare_lincolnshire_feed, published_datetime
+from newsdesk.sources.council_scraper import load_council_config
 from newsdesk.story_queue import NewsDeskStoryQueue
 from newsdesk.header import NewsDeskHeader
 from newsdesk.social.selection import add_story_to_social_desk
@@ -47,14 +42,10 @@ from modules.fire import FireIntelligenceWindow as _EstablishedEditorialWorkspac
 
 
 ALL_SOURCES = "All Sources"
-ALL_PRIORITIES = "All Priorities"
 ALL_CATEGORIES = "All Categories"
-SOURCE_NAMES = (
-    "Bassetlaw District Council",
-    "Nottinghamshire County Council",
-    "East Midlands Combined County Authority",
+SOURCE_NAMES = tuple(
+    source.name for source in load_council_config()["sources"] if source.enabled
 )
-PRIORITIES = (TOP_PRIORITY, HIGH_LOCAL_IMPORTANCE, LOCAL, REVIEW)
 
 
 class CouncilIntelligenceWindow(ctk.CTkToplevel):
@@ -109,7 +100,7 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         self.header = NewsDeskHeader(
             self,
             module_title="Council Intelligence",
-            subtitle="Collect  •  Prioritise  •  Review official local government news",
+            subtitle="Collect  •  Lincolnshire  •  Review official local government news",
             primary_button_text="REFRESH COUNCIL NEWS",
             primary_command=self._refresh_council_news,
             close_command=self._window_support.close,
@@ -142,10 +133,10 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
             panel.grid_columnconfigure(column, weight=1, uniform="council-stats")
         definitions = (
             ("total", "TOTAL STORIES", TEXT_PRIMARY),
-            (TOP_PRIORITY, "TOP PRIORITY", "#ef4444"),
-            (HIGH_LOCAL_IMPORTANCE, "HIGH LOCAL", "#f97316"),
-            (LOCAL, "LOCAL", "#eab308"),
-            (REVIEW, "REVIEW", ACCENT),
+            ("today", "TODAY", SUCCESS),
+            ("recent", "PREVIOUS 3 DAYS", TEXT_PRIMARY),
+            ("older", "OLDER", TEXT_MUTED),
+            ("selected", "SELECTED STORY", ACCENT),
         )
         self.stat_labels = {}
         for column, (key, label, colour) in enumerate(definitions):
@@ -184,12 +175,11 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         self.search_entry.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(9, 5))
         self.search_var.trace_add("write", lambda *_: self._search_debounce.schedule())
         self.source_menu = self._option(filters, (ALL_SOURCES, *SOURCE_NAMES), 1, 0)
-        self.priority_menu = self._option(filters, (ALL_PRIORITIES, *PRIORITIES), 1, 1)
         self.category_menu = self._option(filters, (ALL_CATEGORIES,), 2, 0)
         ctk.CTkButton(
             filters, text="RESET FILTERS", height=30, fg_color="#374151",
             hover_color="#475569", command=self._reset_filters,
-        ).grid(row=2, column=1, sticky="ew", padx=(4, 10), pady=(4, 9))
+        ).grid(row=1, column=1, rowspan=2, sticky="ew", padx=(4, 10), pady=(4, 9))
         self.story_queue = NewsDeskStoryQueue(
             left,
             title="COUNCIL STORY QUEUE",
@@ -216,7 +206,7 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         panel.grid_rowconfigure(1, weight=1)
         panel.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
-            panel, text="EDITORIAL REVIEW", font=("Arial", 16, "bold"),
+            panel, text="STORY REVIEW", font=("Arial", 16, "bold"),
             text_color=TEXT_PRIMARY, anchor="w",
         ).grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 10))
         self.detail_content = ctk.CTkScrollableFrame(panel, fg_color=PANEL_BG, corner_radius=12)
@@ -260,15 +250,22 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
             self.refresh_button.configure(state="normal", text="REFRESH COUNCIL NEWS")
             self.status_label.configure(text=f"Failed: {payload}")
             return
-        self._collection_complete(
-            payload.stories,
-            payload.errors,
-            payload.source_health_payload(),
-            notify_dashboard=True,
-        )
+        try:
+            self._collection_complete(
+                payload.stories,
+                payload.errors,
+                payload.source_health_payload(),
+                notify_dashboard=True,
+            )
+        except Exception as error:
+            self.is_refreshing = False
+            self.refresh_button.configure(
+                state="normal", text="REFRESH COUNCIL NEWS"
+            )
+            self.status_label.configure(text=f"Failed: {error}")
 
     def _collection_complete(self, stories, errors, source_health, *, notify_dashboard):
-        self.stories = list(stories)
+        self.stories = prepare_lincolnshire_feed(stories)
         self.errors = list(errors)
         self.source_health = dict(source_health or {})
         self.selected_story = None
@@ -312,7 +309,6 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
     def _reset_filters(self):
         self.search_var.set("")
         self.source_menu.set(ALL_SOURCES)
-        self.priority_menu.set(ALL_PRIORITIES)
         self.category_menu.set(ALL_CATEGORIES)
         self._refresh_visible_queue()
 
@@ -320,16 +316,14 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         self._search_debounce.cancel()
         query = self.search_var.get().strip().casefold()
         source = self.source_menu.get()
-        priority = self.priority_menu.get()
         category = self.category_menu.get()
         visible = [
             story for story in self.stories
             if (source == ALL_SOURCES or story.source == source)
-            and (priority == ALL_PRIORITIES or story.priority == priority)
             and (category == ALL_CATEGORIES or story.category == category)
             and (not query or query in self._searchable_text(story))
         ]
-        visible.sort(key=lambda story: (PRIORITY_ORDER.get(story.priority, 99), -self._published_timestamp(story), story.title.casefold()))
+        visible.sort(key=lambda story: (self._published_timestamp(story), story.title.casefold()), reverse=True)
         if self.selected_story is not None and self.selected_story not in visible:
             self.selected_story = None
             self._show_detail_placeholder()
@@ -342,7 +336,7 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
 
     @staticmethod
     def _searchable_text(story):
-        return " ".join((story.title, story.summary, story.body, story.source, story.category, story.location, str(story.extras.get("priority_reason", "")))).casefold()
+        return " ".join((story.title, story.summary, story.body, story.source, story.category, story.location)).casefold()
 
     @staticmethod
     def _published_timestamp(story):
@@ -356,12 +350,12 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
 
     @staticmethod
     def _queue_mapping(story):
-        reason = str(story.extras.get("priority_reason", ""))
         reason = CouncilIntelligenceWindow._queue_reason(story)
-        summary = " | ".join(value for value in (story.category, reason) if value)
+        completeness = "SUMMARY ONLY" if story.extras.get("content_completeness") == "summary_only" else ""
+        summary = " | ".join(value for value in (completeness, story.category, reason) if value)
         return {
             "id": id(story), "title": story.title, "summary": summary,
-            "priority": story.priority, "source": story.source,
+            "priority": "", "source": story.source,
             "published": CouncilIntelligenceWindow._format_date(story.published),
             "story": story,
         }
@@ -372,15 +366,10 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
 
     @staticmethod
     def _queue_reason(story):
-        reason = str(story.extras.get("priority_reason", "")).strip()
         locations = list(story.extras.get("matched_locations") or [])
-        if reason == "Direct Bassetlaw mention":
-            return "Direct Bassetlaw match"
-        if reason.endswith(" location match") and locations:
+        if locations:
             return f"Direct {locations[0]} match"
-        if reason == "Outside-district story retained for review":
-            return "Regional announcement retained for review"
-        return reason
+        return "Official Lincolnshire council source"
 
     def _handle_queue_selection(self, mapping):
         story = mapping.get("story")
@@ -396,6 +385,7 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
                 except Exception:
                     self.selected_result = None
             self._show_story(story)
+            self.stat_labels["selected"].configure(text="1")
 
     def _clear_detail(self):
         for child in self.detail_content.winfo_children():
@@ -409,7 +399,7 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         ).pack(pady=(90, 10))
         ctk.CTkLabel(
             self.detail_content,
-            text="Choose a story to inspect its priority, location evidence and article text.",
+            text="Choose a story to inspect its location evidence and article text.",
             text_color=TEXT_MUTED, wraplength=600,
         ).pack()
         if hasattr(self, "action_bar"):
@@ -424,8 +414,9 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         locations = ", ".join(story.extras.get("matched_locations") or [])
         metadata = "  |  ".join(
             value for value in (
-                story.source, self._format_date(story.published), story.priority,
+                story.source, self._format_date(story.published),
                 story.category, locations,
+                "SUMMARY ONLY" if story.extras.get("content_completeness") == "summary_only" else "",
             ) if value
         )
         ctk.CTkLabel(
@@ -642,10 +633,21 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
 
     def _update_statistics(self):
         self.stat_labels["total"].configure(text=str(len(self.stories)))
-        for priority in PRIORITIES:
-            self.stat_labels[priority].configure(
-                text=str(sum(story.priority == priority for story in self.stories))
-            )
+        now = datetime.now(timezone.utc)
+        ages = []
+        for story in self.stories:
+            parsed = published_datetime(getattr(story, "published", ""))
+            ages.append((now - parsed).days if parsed is not None else None)
+        self.stat_labels["today"].configure(text=str(sum(age == 0 for age in ages)))
+        self.stat_labels["recent"].configure(
+            text=str(sum(age is not None and 1 <= age <= 3 for age in ages))
+        )
+        self.stat_labels["older"].configure(
+            text=str(sum(age is None or age > 3 for age in ages))
+        )
+        self.stat_labels["selected"].configure(
+            text="1" if self.selected_story is not None else "0"
+        )
 
 
 def open_council(master=None):

@@ -22,6 +22,11 @@ CITY_COUNTY = {
     "Crich": "Derbyshire", "Bolsover": "Derbyshire", "Market Rasen": "Lincolnshire",
     "Boston": "Lincolnshire", "Grantham": "Lincolnshire", "Skegness": "Lincolnshire",
     "Spalding": "Lincolnshire", "Northampton": "Northamptonshire", "Corby": "Northamptonshire",
+    "Scunthorpe": "Lincolnshire", "Grimsby": "Lincolnshire", "Cleethorpes": "Lincolnshire",
+    "Louth": "Lincolnshire", "Sleaford": "Lincolnshire", "Bourne": "Lincolnshire",
+    "Stamford": "Lincolnshire", "Gainsborough": "Lincolnshire", "Horncastle": "Lincolnshire",
+    "Mablethorpe": "Lincolnshire", "Alford": "Lincolnshire", "Spilsby": "Lincolnshire",
+    "Woodhall Spa": "Lincolnshire", "Barton-upon-Humber": "Lincolnshire",
     "Kettering": "Northamptonshire", "Wellingborough": "Northamptonshire", "Malvern": "Worcestershire",
     "Worcester": "Worcestershire", "Bewdley": "Worcestershire", "Redditch": "Worcestershire",
     "Bromsgrove": "Worcestershire", "Rugby": "Warwickshire", "Warwick": "Warwickshire",
@@ -49,6 +54,14 @@ AREA_GEO = {
     "South Kesteven": ("Grantham", "Lincolnshire"), "North Kesteven": (None, "Lincolnshire"),
     "West Lindsey": (None, "Lincolnshire"), "East Lindsey": (None, "Lincolnshire"),
     "South Holland": ("Spalding", "Lincolnshire"), "North Northamptonshire": (None, "Northamptonshire"),
+    "North Lincolnshire": ("Scunthorpe", "Lincolnshire"),
+    "North East Lincolnshire": ("Grimsby", "Lincolnshire"),
+    "Barton-upon-Humber, North Lincolnshire": ("Barton-upon-Humber", "Lincolnshire"),
+    "North Hykeham, Lincoln": ("North Hykeham", "Lincolnshire"),
+    "Bourne, Lincolnshire": ("Bourne", "Lincolnshire"),
+    "Louth, Lincolnshire": ("Louth", "Lincolnshire"),
+    "East Kirkby, Lincolnshire": ("East Kirkby", "Lincolnshire"),
+    "Ludborough, Lincolnshire": ("Ludborough", "Lincolnshire"),
     "West Northamptonshire": ("Northampton", "Northamptonshire"), "Coventry / Warwickshire": ("Coventry", "West Midlands"),
     "Warwick District": ("Warwick", "Warwickshire"), "Stratford District": ("Stratford-upon-Avon", "Warwickshire"),
     "Cannock Chase": (None, "Staffordshire"), "East Staffordshire": ("Burton upon Trent", "Staffordshire"),
@@ -59,6 +72,22 @@ AREA_GEO = {
 }
 
 SOURCE_GEO = {
+    "New Theatre Royal Lincoln": ("New Theatre Royal Lincoln", "Lincoln", "Lincolnshire", "LN2 1JJ"),
+    "The Engine Shed Lincoln": ("The Engine Shed", "Lincoln", "Lincolnshire", "LN6 7TS"),
+    "Scunthorpe Theatres": (None, "Scunthorpe", "Lincolnshire", None),
+    "Grimsby Auditorium": ("Grimsby Auditorium", "Grimsby", "Lincolnshire", "DN31 2BH"),
+    "Louth Riverhead Theatre": ("Louth Riverhead Theatre", "Louth", "Lincolnshire", "LN11 0BX"),
+    "Stamford Arts Centre": ("Stamford Arts Centre", "Stamford", "Lincolnshire", "PE9 2DL"),
+    "Stamford Corn Exchange Theatre": ("Stamford Corn Exchange Theatre", "Stamford", "Lincolnshire", None),
+    "Sleaford Playhouse": ("Sleaford Playhouse", "Sleaford", "Lincolnshire", None),
+    "Terry O'Toole Theatre": ("Terry O'Toole Theatre", "North Hykeham", "Lincolnshire", None),
+    "Trinity Arts Centre": ("Trinity Arts Centre", "Gainsborough", "Lincolnshire", None),
+    "Docks Academy": ("Docks Academy", "Grimsby", "Lincolnshire", None),
+    "Caxton Theatre": ("Caxton Theatre", "Grimsby", "Lincolnshire", None),
+    "The Ropewalk": ("The Ropewalk", "Barton-upon-Humber", "Lincolnshire", "DN18 5JT"),
+    "20-21 Visual Arts Centre": ("20-21 Visual Arts Centre", "Scunthorpe", "Lincolnshire", None),
+    "North Lincolnshire Museum": ("North Lincolnshire Museum", "Scunthorpe", "Lincolnshire", None),
+    "Normanby Hall Country Park": ("Normanby Hall Country Park", "Scunthorpe", "Lincolnshire", None),
     "Rock City": ("Rock City", "Nottingham", "Nottinghamshire", "NG1 5GG"),
     "Theatre Royal & Royal Concert Hall": ("Theatre Royal & Royal Concert Hall", "Nottingham", "Nottinghamshire", "NG1 5ND"),
     "Nottingham Playhouse": ("Nottingham Playhouse", "Nottingham", "Nottinghamshire", None),
@@ -219,5 +248,7 @@ class EventEnricher:
         score += 3 if e.price_text else 0
         score += 2 if e.postcode else 0
         score = min(score, 100)
-        status = "complete" if score >= 85 else "usable" if score >= 65 else "limited" if score >= 45 else "review"
+        # A publication-ready event normally has both editorial copy and artwork.
+        # Missing either remains usable, but must not be labelled complete.
+        status = "complete" if score >= 85 and e.description and e.image_url else "usable" if score >= 65 else "limited" if score >= 45 else "review"
         return Quality(score, status)

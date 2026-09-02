@@ -72,7 +72,15 @@ class SourceCatalog:
     def load_default(cls) -> "SourceCatalog":
         path = files("eventsdesk").joinpath("data/source_registry.json")
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return cls(SourceConfig(**row) for row in payload["sources"])
+        rows = list(payload["sources"])
+        extension = files("eventsdesk").joinpath("data/lincolnshire_sources.json")
+        if extension.is_file():
+            additions = json.loads(extension.read_text(encoding="utf-8")).get("sources", [])
+            merged = {row["id"]: row for row in rows}
+            for row in additions:
+                merged[row["id"]] = row
+            rows = list(merged.values())
+        return cls(SourceConfig(**row) for row in rows)
 
     def get(self, source_id: str) -> SourceConfig:
         return self._by_id[source_id]
@@ -146,7 +154,12 @@ def connector_factory(config: SourceConfig):
             "Nottingham Arts Theatre": ("Nottingham Arts Theatre", "Nottingham", "NG1 3BE"),
             "Déda": ("Chapel Street Arts Centre", "Derby", "DE1 3GU"),
         }
-        filters = {"Pavilion Arts Centre Buxton": "Pavilion Arts Centre", "Town Hall Birmingham": "Town Hall", "Symphony Hall Birmingham": "Symphony Hall"}
+        filters = {
+            "Pavilion Arts Centre Buxton": "Pavilion Arts Centre",
+            "Town Hall Birmingham": "Town Hall",
+            "Symphony Hall Birmingham": "Symphony Hall",
+            "Cadwell Park": "Cadwell Park",
+        }
         dv, dt, dp = defaults.get(config.name, (None, None, None))
         common = {"source_name": config.name, "source_rank": config.source_rank}
         quality = {"default_venue": dv, "default_town": dt, "default_postcode": dp, "venue_filter": filters.get(config.name)}

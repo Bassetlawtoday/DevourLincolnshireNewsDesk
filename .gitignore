@@ -76,3 +76,17 @@ config/*.bak
 
 # Retention audit data
 data/retention/
+
+# Runtime feed snapshots and application backups
+data/feed_snapshots/
+data/contentdesk/
+data/eventsdesk/
+data/sport_source_health.json
+backups/
+
+# Events runtime output (source registries remain versioned)
+eventsdesk/data/*.sqlite
+eventsdesk/data/latest_harvest*.json
+eventsdesk/data/latest_harvest*.jsonl
+eventsdesk/data/rejected_events.json
+eventsdesk/data/sport_source_health.json

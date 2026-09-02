@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import logging
 import sys
 from typing import Any
 
 
 DEFAULT_SEARCH_DEBOUNCE_MS = 180
+LOGGER = logging.getLogger(__name__)
 
 
 def resolve_window(owner):
@@ -209,6 +211,25 @@ class IntelligenceWindowSupport:
         holder["id"] = callback_id
         self._after_ids.add(callback_id)
         return callback_id
+
+    def call_later_guarded(
+        self,
+        delay_ms: int,
+        callback: Callable[[], None],
+        *,
+        on_error: Callable[[str], None] | None = None,
+    ):
+        """Run scheduled UI work without leaving a refresh stuck on failure."""
+
+        def guarded():
+            try:
+                callback()
+            except Exception as error:
+                LOGGER.exception("Scheduled intelligence-window update failed")
+                if on_error is not None:
+                    on_error(str(error))
+
+        return self.call_later(delay_ms, guarded)
 
     def cancel(self, callback_id) -> None:
         self._after_ids.discard(callback_id)

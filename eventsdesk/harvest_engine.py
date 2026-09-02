@@ -14,12 +14,13 @@ from .storage import EventStore
 from .enrichment import EventEnricher
 from .event_quality import filter_false_events, repeated_title_anomalies
 from .base import AccessBlockedError, MissingCredentialError
+from .source_scope import event_is_allowed, event_is_in_enabled_geography
 
 
 NETWORK_TEST_HOSTS = (
-    "rock-city.co.uk",
-    "www.trch.co.uk",
-    "www.academymusicgroup.com",
+    "www.visitlincolnshire.com",
+    "www.lincolnshire.gov.uk",
+    "www.lincstrust.org.uk",
 )
 
 
@@ -66,7 +67,7 @@ def _default_events_output(summary_output: str | Path) -> str:
     return str(p.with_name(f"{p.stem}_events.jsonl"))
 
 class MidlandsHarvestEngine:
-    """Catalog-driven harvesting for the frozen Midlands source inventory."""
+    """Catalog-driven harvesting for the configured EventsDesk inventory."""
 
     def __init__(self, catalog: SourceCatalog | None = None):
         self.catalog = catalog or SourceCatalog.load_default()
@@ -182,8 +183,14 @@ class MidlandsHarvestEngine:
                         "events": latest.get("events", 0),
                     })
 
-        enricher = EventEnricher({c.name: c.area for c in selected}, {c.name: c.type for c in selected})
+        source_areas = {c.name: c.area for c in selected}
+        enricher = EventEnricher(source_areas, {c.name: c.type for c in selected})
         raw = [enricher.enrich(event) for event in raw]
+        raw = [
+            event for event in raw
+            if event_is_in_enabled_geography(event, source_areas.get(event.source))
+            and event_is_allowed(event)
+        ]
         merged = deduplicate(raw)
         with EventStore(database) as store:
             persistence = asdict(

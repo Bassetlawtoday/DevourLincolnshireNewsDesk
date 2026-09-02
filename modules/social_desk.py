@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import threading
-from tkinter import messagebox
+from pathlib import Path
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from newsdesk.social.metricool import MetricoolClient, MetricoolError
+from newsdesk.social.metricool import MetricoolClient, MetricoolError, MetricoolImageError
 from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
-from newsdesk.social.text import clean_social_text, compose_metricool_text
+from newsdesk.social.text import clean_social_text, compose_metricool_text, repair_ldrs_draft
 from newsdesk.theme import (
     ACTION_BLUE, ACTION_BLUE_HOVER, APP_BG, BORDER, BRAND_RED, BRAND_RED_HOVER,
     CARD_BG, HEADER_BG, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
@@ -23,6 +24,7 @@ NETWORKS = (
     ("X", "twitter"), ("LinkedIn", "linkedin"),
     ("Threads", "threads"), ("Bluesky", "bluesky"),
 )
+IMAGE_LIBRARY = Path(r"C:\Users\Windows\Desktop\Devour News Lincs Images")
 
 
 class SocialDesk(ctk.CTkToplevel):
@@ -108,6 +110,23 @@ class SocialDesk(ctk.CTkToplevel):
         self.text_box.pack(fill="x")
         self.source_entry = self._entry(form, "Article or event URL (added automatically when sent)")
         self.image_entry = self._entry(form, "Public image URL (optional)")
+        image_library = ctk.CTkFrame(form, fg_color="transparent")
+        image_library.pack(fill="x", pady=(7, 0))
+        ctk.CTkButton(
+            image_library,
+            text="IMAGE LIBRARY",
+            width=145,
+            fg_color=ACTION_BLUE,
+            hover_color=ACTION_BLUE_HOVER,
+            command=self._choose_local_image,
+        ).pack(side="left", padx=(0, 10))
+        self.local_image_label = ctk.CTkLabel(
+            image_library,
+            text="No local image selected.",
+            text_color=TEXT_MUTED,
+            anchor="w",
+        )
+        self.local_image_label.pack(side="left", fill="x", expand=True)
         image_meta = ctk.CTkFrame(form, fg_color="transparent")
         image_meta.pack(fill="x")
         self.caption_entry = self._entry(image_meta, "Image caption", side=True)
@@ -146,9 +165,11 @@ class SocialDesk(ctk.CTkToplevel):
 
     def _show_connection_state(self):
         settings = self.settings_store.load()
-        if settings["token"] and settings["user_id"] and settings["blog_id"]:
+        networks = {item for item in settings.get("connected_networks", "").split(",") if item}
+        if settings["token"] and settings["user_id"] and settings["blog_id"] and settings.get("verified_at"):
             name = settings["brand_name"] or settings["blog_id"]
-            self.connection_label.configure(text=f"Metricool configured for {name}. Social profiles still need to be connected in Metricool.", text_color=SUCCESS)
+            facebook = "Facebook verified" if "facebook" in networks else "Facebook not connected"
+            self.connection_label.configure(text=f"Metricool API verified for {name} — {facebook}.", text_color=SUCCESS if "facebook" in networks else TEXT_MUTED)
         else:
             self.connection_label.configure(text="Metricool not configured yet — local Social Desk drafts are available now.", text_color=TEXT_MUTED)
 
@@ -198,11 +219,17 @@ class SocialDesk(ctk.CTkToplevel):
 
     def _load(self, draft):
         self.current = draft
+        if draft.source_kind == "content":
+            repair_ldrs_draft(draft)
+            self.store.save(self.drafts)
         self._populate()
 
     def _populate(self):
         draft = self.current or SocialDraft()
-        draft.text = clean_social_text(draft.text, source_url=draft.source_url)
+        # The original article URL lives in its dedicated field and is added
+        # automatically at send time. Other useful URLs remain in the copy.
+        excluded_url = draft.internal_source_url or draft.source_url
+        draft.text = clean_social_text(draft.text, source_url=excluded_url)
         if "ldrs.org.uk/assets/images/placeholder.png" in str(draft.image_url or "").casefold():
             draft.image_url = ""; draft.image_caption = ""; draft.image_credit = ""; draft.image_rights_status = "no image"
         for entry, value in ((self.title_entry, draft.title), (self.source_entry, draft.source_url), (self.image_entry, draft.image_url), (self.caption_entry, draft.image_caption), (self.credit_entry, draft.image_credit), (self.date_entry, draft.publication_datetime.replace("T", " ")[:16]), (self.timezone_entry, draft.timezone)):
@@ -211,7 +238,30 @@ class SocialDesk(ctk.CTkToplevel):
         self.text_box.yview_moveto(0)
         for value, variable in self.network_vars.items(): variable.set(value in draft.providers)
         self.rights_var.set(draft.image_rights_status == "approved")
+        local_name = Path(draft.local_image_path).name if draft.local_image_path else ""
+        self.local_image_label.configure(
+            text=f"Local image: {local_name}" if local_name else "No local image selected.",
+            text_color=TEXT_PRIMARY if local_name else TEXT_MUTED,
+        )
         self.editor_status.configure(text=f"Status: {draft.status}")
+
+    def _choose_local_image(self):
+        IMAGE_LIBRARY.mkdir(parents=True, exist_ok=True)
+        selected = filedialog.askopenfilename(
+            parent=self,
+            title="Choose an image for this social draft",
+            initialdir=str(IMAGE_LIBRARY),
+            filetypes=(("Supported images", "*.jpg *.jpeg *.png"), ("JPEG images", "*.jpg *.jpeg"), ("PNG images", "*.png")),
+        )
+        if not selected:
+            return
+        draft = self.current or SocialDraft()
+        draft.local_image_path = selected
+        draft.image_url = ""
+        self.current = draft
+        self.image_entry.delete(0, "end")
+        self.local_image_label.configure(text=f"Local image: {Path(selected).name}", text_color=TEXT_PRIMARY)
+        self.editor_status.configure(text="Local image selected. Confirm its credit and social-use rights before sending.", text_color=TEXT_MUTED)
 
     def _capture(self):
         draft = self.current or SocialDraft()
@@ -219,9 +269,12 @@ class SocialDesk(ctk.CTkToplevel):
         draft.text = self.text_box.get("1.0", "end").strip()
         draft.source_url = self.source_entry.get().strip()
         draft.image_url = self.image_entry.get().strip()
+        if draft.image_url:
+            draft.local_image_path = ""
         draft.image_caption = self.caption_entry.get().strip()
         draft.image_credit = self.credit_entry.get().strip()
-        draft.image_rights_status = "no image" if not draft.image_url else ("approved" if self.rights_var.get() else "not reviewed")
+        has_image = bool(draft.image_url or draft.local_image_path)
+        draft.image_rights_status = "no image" if not has_image else ("approved" if self.rights_var.get() else "not reviewed")
         draft.providers = [value for value, variable in self.network_vars.items() if variable.get()]
         raw = self.date_entry.get().strip().replace(" ", "T")
         draft.publication_datetime = raw + (":00" if len(raw) == 16 else "")
@@ -249,13 +302,15 @@ class SocialDesk(ctk.CTkToplevel):
         draft = self.current
         if not draft.text or not draft.providers:
             messagebox.showwarning("Social Desk", "Post text and at least one network are required.", parent=self); return
-        if "instagram" in draft.providers and not draft.image_url:
+        if "instagram" in draft.providers and not (draft.image_url or draft.local_image_path):
             messagebox.showwarning("Social Desk", "Instagram requires an image.", parent=self); return
-        if draft.image_url and not draft.image_credit:
+        has_image = bool(draft.image_url or draft.local_image_path)
+        if has_image and not draft.image_credit:
             messagebox.showwarning("Social Desk", "Add the required image credit before sending this image.", parent=self); return
-        if draft.image_url and draft.image_rights_status != "approved":
+        if has_image and draft.image_rights_status != "approved":
             messagebox.showwarning("Social Desk", "Confirm that the image is approved for social use before sending.", parent=self); return
-        outgoing = compose_metricool_text(draft.text, source_url=draft.source_url, image_caption=draft.image_caption, image_credit=draft.image_credit)
+        outgoing_url = draft.source_url if draft.include_source_url else ""
+        outgoing = compose_metricool_text(draft.text, source_url=outgoing_url, image_caption=draft.image_caption, image_credit=draft.image_credit)
         if "twitter" in draft.providers and len(outgoing) > 280:
             messagebox.showwarning("Social Desk", f"The X version is {len(outgoing)} characters. Reduce it to 280 or fewer.", parent=self); return
         try:
@@ -265,52 +320,129 @@ class SocialDesk(ctk.CTkToplevel):
         settings = self.settings_store.load()
         if not settings["token"] or not settings["user_id"] or not settings["blog_id"]:
             messagebox.showinfo("Metricool not ready", "The post is safely saved locally. Connect a Metricool brand and social profiles, then complete Metricool Settings.", parent=self); return
+        connected = {item for item in settings.get("connected_networks", "").split(",") if item}
+        unavailable = sorted(set(draft.providers) - connected)
+        if unavailable:
+            messagebox.showwarning("Metricool profiles", f"These networks are not connected to the verified Metricool brand: {', '.join(unavailable)}.", parent=self); return
         self.send_button.configure(state="disabled", text="SENDING DRAFT...")
         def worker():
             try:
                 social_text = compose_metricool_text(
                     draft.text,
-                    source_url=draft.source_url,
+                    source_url=draft.source_url if draft.include_source_url else "",
                     image_caption=draft.image_caption,
                     image_credit=draft.image_credit,
                 )
-                result = MetricoolClient(token=settings["token"], user_id=settings["user_id"], blog_id=settings["blog_id"]).create_draft(text=social_text, providers=draft.providers, publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url)
+                result = MetricoolClient(token=settings["token"], user_id=settings["user_id"], blog_id=settings["blog_id"]).create_draft(text=social_text, providers=draft.providers, publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url, image_path=draft.local_image_path)
                 self.after(0, lambda: self._sent(result))
+            except MetricoolImageError as exc:
+                self.after(0, lambda detail=str(exc): self._image_send_failed(detail))
             except Exception as exc:
-                self.after(0, lambda: self._send_failed(str(exc)))
+                self.after(0, lambda detail=str(exc): self._send_failed(detail))
         threading.Thread(target=worker, daemon=True).start()
 
     def _sent(self, result):
         self.current.status = "Sent to Metricool as draft"
-        if isinstance(result, dict): self.current.metricool_id = str(result.get("id") or result.get("postId") or "")
+        self.current.metricool_id = MetricoolClient.draft_id(result)
         self.store.save(self.drafts); self._refresh_list(); self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
-        self.editor_status.configure(text="Draft delivered to Metricool. Review and schedule it there.", text_color=SUCCESS)
+        reference = f" ID {self.current.metricool_id}." if self.current.metricool_id else "."
+        self.editor_status.configure(text=f"Draft delivered to Metricool{reference} Review it there.", text_color=SUCCESS)
 
     def _send_failed(self, detail):
         self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
         messagebox.showerror("Metricool", detail, parent=self)
 
+    def _image_send_failed(self, detail):
+        self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
+        message = "Draft not sent — image could not be imported."
+        self.editor_status.configure(text=message, text_color=BRAND_RED)
+        messagebox.showerror("Metricool image", f"{message}\n\n{detail}\n\nThe local draft has been retained. Choose another image or remove it before trying again.", parent=self)
+
     def _settings(self):
         settings = self.settings_store.load()
-        dialog = ctk.CTkToplevel(self); dialog.title("Metricool Settings"); dialog.geometry("680x570"); dialog.configure(fg_color=APP_BG); dialog.transient(self)
+        dialog = ctk.CTkToplevel(self); dialog.title("Metricool Settings"); dialog.geometry("720x700"); dialog.configure(fg_color=APP_BG); dialog.transient(self)
         panel = ctk.CTkFrame(dialog, fg_color=HEADER_BG); panel.pack(fill="both", expand=True, padx=20, pady=20)
         ctk.CTkLabel(panel, text="METRICOOL SETTINGS", font=("Arial", 22, "bold"), text_color=TEXT_PRIMARY).pack(anchor="w", padx=20, pady=(18, 5))
-        ctk.CTkLabel(panel, text="Connect social profiles in Metricool first. The token is encrypted for this Windows user and is never stored in Git.", wraplength=610, justify="left", text_color=TEXT_SECONDARY).pack(anchor="w", padx=20, pady=(0, 12))
+        ctk.CTkLabel(panel, text="Enter the REST API token and user ID, then test the connection. NewsDesk retrieves your actual Metricool brands and connected social profiles.", wraplength=650, justify="left", text_color=TEXT_SECONDARY).pack(anchor="w", padx=20, pady=(0, 12))
         entries = {}
-        for key, label, masked in (("token", "REST API access token", True), ("user_id", "Metricool user ID", False), ("blog_id", "Brand / blog ID", False), ("brand_name", "Brand name", False), ("timezone", "Timezone", False)):
+        for key, label, masked in (("token", "REST API access token", True), ("user_id", "Metricool user ID", False), ("timezone", "Timezone", False)):
             ctk.CTkLabel(panel, text=label, text_color=TEXT_SECONDARY).pack(anchor="w", padx=20)
-            entry = ctk.CTkEntry(panel, show="*" if masked else "", fg_color=CARD_BG, border_color=BORDER, text_color=TEXT_PRIMARY); entry.pack(fill="x", padx=20, pady=(2, 9)); entry.insert(0, settings[key]); entries[key] = entry
+            entry = ctk.CTkEntry(panel, show="*" if masked else "", fg_color=CARD_BG, border_color=BORDER, text_color=TEXT_PRIMARY)
+            entry.pack(fill="x", padx=20, pady=(2, 9)); entry.insert(0, settings[key]); entries[key] = entry
+        ctk.CTkLabel(panel, text="Verified Metricool brand", text_color=TEXT_SECONDARY).pack(anchor="w", padx=20)
+        initial = settings["brand_name"] or "Test connection first"
+        brand_var = ctk.StringVar(value=initial)
+        brand_menu = ctk.CTkOptionMenu(panel, values=[initial], variable=brand_var, state="disabled")
+        brand_menu.pack(fill="x", padx=20, pady=(2, 9))
+        status = ctk.CTkLabel(panel, text="Connection not tested in this window.", wraplength=650, justify="left", anchor="w", text_color=TEXT_MUTED)
+        status.pack(fill="x", padx=20, pady=(5, 10))
+        verified = {}
         actions = ctk.CTkFrame(panel, fg_color="transparent"); actions.pack(fill="x", padx=20, pady=8)
+        test_button = ctk.CTkButton(actions, text="TEST CONNECTION"); test_button.pack(side="left", padx=(0, 8))
+        facebook_button = ctk.CTkButton(actions, text="SEND FACEBOOK TEST DRAFT", fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER, state="disabled")
+        facebook_button.pack(side="left")
+
+        def chosen(): return verified.get(brand_var.get())
+        def show_brand(_value=None):
+            brand = chosen(); facebook = (brand or {}).get("networks", {}).get("facebook")
+            facebook_button.configure(state="normal" if facebook else "disabled")
+            status.configure(text=f"Facebook connected as {facebook}." if facebook else "Selected brand has no Facebook connection.", text_color=SUCCESS if facebook else TEXT_MUTED)
+        brand_menu.configure(command=show_brand)
+
+        def connection_done(brands):
+            test_button.configure(state="normal", text="TEST CONNECTION"); verified.clear()
+            for brand in brands: verified[f"{brand['name']} (ID {brand['id']})"] = brand
+            choices = list(verified); brand_menu.configure(values=choices, state="normal")
+            selected = next((label for label, brand in verified.items() if brand["id"] == settings["blog_id"]), choices[0])
+            brand_var.set(selected); show_brand()
+        def connection_failed(detail):
+            test_button.configure(state="normal", text="TEST CONNECTION"); status.configure(text=detail, text_color=BRAND_RED)
+        def test_connection():
+            token = entries["token"].get().strip(); user_id = entries["user_id"].get().strip()
+            if not token or not user_id:
+                messagebox.showwarning("Metricool Settings", "Enter the REST API token and Metricool user ID.", parent=dialog); return
+            test_button.configure(state="disabled", text="TESTING...")
+            def worker():
+                try:
+                    brands = MetricoolClient(token=token, user_id=user_id).connection_details()
+                    dialog.after(0, lambda value=brands: connection_done(value))
+                except Exception as exc:
+                    detail = str(exc); dialog.after(0, lambda value=detail: connection_failed(value))
+            threading.Thread(target=worker, daemon=True).start()
+        test_button.configure(command=test_connection)
+
+        def test_facebook():
+            brand = chosen(); facebook = (brand or {}).get("networks", {}).get("facebook")
+            if not facebook or not messagebox.askyesno("Metricool test draft", f"Create one unpublished Facebook test draft for {facebook}?", parent=dialog): return
+            facebook_button.configure(state="disabled", text="SENDING TEST...")
+            def worker():
+                try:
+                    when = (datetime.now() + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
+                    result = MetricoolClient(token=entries["token"].get(), user_id=brand["user_id"], blog_id=brand["id"]).create_draft(text="NewsDesk Pro Metricool connection test — unpublished draft.", providers=["facebook"], publication_datetime=when, timezone=entries["timezone"].get().strip() or brand["timezone"])
+                    reference = MetricoolClient.draft_id(result) or "returned without an ID"
+                    dialog.after(0, lambda value=reference: test_done(value))
+                except Exception as exc:
+                    detail = str(exc); dialog.after(0, lambda value=detail: test_failed(value))
+            threading.Thread(target=worker, daemon=True).start()
+        def test_done(reference):
+            facebook_button.configure(state="normal", text="SEND FACEBOOK TEST DRAFT"); status.configure(text=f"Facebook test draft created successfully. Metricool reference: {reference}.", text_color=SUCCESS)
+        def test_failed(detail):
+            facebook_button.configure(state="normal", text="SEND FACEBOOK TEST DRAFT"); messagebox.showerror("Metricool test draft", detail, parent=dialog)
+        facebook_button.configure(command=test_facebook)
+
+        save_row = ctk.CTkFrame(panel, fg_color="transparent"); save_row.pack(fill="x", padx=20, pady=(12, 8))
         def save():
+            brand = chosen()
+            if not brand:
+                messagebox.showwarning("Metricool Settings", "Test the connection and select a verified brand before saving.", parent=dialog); return
             try:
-                self.settings_store.save({key: entry.get() for key, entry in entries.items()})
+                self.settings_store.save({"token": entries["token"].get(), "user_id": brand["user_id"], "blog_id": brand["id"], "brand_name": brand["name"], "timezone": entries["timezone"].get() or brand["timezone"], "verified_at": datetime.now().astimezone().isoformat(), "connected_networks": ",".join(sorted(brand["networks"]))})
             except Exception as exc:
                 messagebox.showerror("Metricool Settings", str(exc), parent=dialog); return
             self._show_connection_state(); dialog.destroy()
-        ctk.CTkButton(actions, text="SAVE SETTINGS", command=save).pack(side="left")
-        ctk.CTkButton(actions, text="CANCEL", fg_color="#475569", command=dialog.destroy).pack(side="right")
+        ctk.CTkButton(save_row, text="SAVE VERIFIED SETTINGS", command=save).pack(side="left")
+        ctk.CTkButton(save_row, text="CANCEL", fg_color="#475569", command=dialog.destroy).pack(side="right")
         dialog.after_idle(lambda: present_window_foreground(dialog, temporary_topmost=True))
-
 
 def open_social_desk(master):
     return SocialDesk(master)

@@ -18,6 +18,7 @@ from contentdesk.collector import ContentExplorerCollector, ContentExplorerError
 from contentdesk.config import CredentialError, has_api_key, load_api_key, load_settings, save_api_key, save_settings
 from contentdesk.storage import ContentStore, decode_list
 from newsdesk.header import NewsDeskHeader
+from newsdesk.geography.lincolnshire import match_lincolnshire
 from newsdesk.rich_clipboard import copy_rich_article
 from newsdesk.services.image_service import ImageService
 from newsdesk.story import Story
@@ -62,6 +63,30 @@ def _clean_article_copy(value: str, title: str = "") -> str:
     return "\n\n".join(_detail_body_lines(lines, title, len(lines))).strip()
 
 
+def _needs_detail_refresh(row) -> bool:
+    """Refresh records created before attachment metadata was parsed correctly."""
+
+    if not int(row["detail_complete"] or 0) or not str(row["body"] or "").strip():
+        return True
+    lines = [line.strip().casefold() for line in str(row["body"] or "").splitlines() if line.strip()]
+    duplicated_lead = len(lines) > 1 and lines[0] == lines[1]
+    weak_credit = bool(str(row["image_url"] or "").strip()) and str(
+        row["image_credit"] or ""
+    ).strip().casefold() in {"", "ldrs"}
+    return duplicated_lead or weak_credit
+
+
+def _row_is_lincolnshire(row) -> bool:
+    """Keep the workspace and analytics scoped to Greater Lincolnshire."""
+
+    return match_lincolnshire(
+        (
+            " ".join(decode_list(row["authorities_json"])),
+            row["title"], row["slug"], row["summary"], row["body"],
+        )
+    ).matched
+
+
 def _story_from_row(row) -> Story:
     authorities = decode_list(row["authorities_json"])
     categories = decode_list(row["categories_json"])
@@ -88,7 +113,7 @@ def _story_from_row(row) -> Story:
         # The complete LDRS caption contains both the named subject and the
         # mandatory credit/permission wording.  Keep it intact through the
         # central image library and Newsletter/Ghost output.
-        image_credit=str(image_caption or row["image_credit"] or "LDRS").strip(),
+        image_credit=str(row["image_credit"] or image_caption or "LDRS").strip(),
         image_alt_text=image_subject,
         tags=[*authorities, *categories],
         extras={
@@ -241,7 +266,7 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
         self.status=ctk.CTkLabel(self,text="Local Democracy Intelligence ready",text_color=TEXT_MUTED,anchor="w",fg_color=HEADER_BG); self.status.grid(row=3,column=0,sticky="ew",ipadx=18,ipady=8)
 
     def refresh_database(self):
-        self.rows=list(self.store.list_stories())
+        self.rows=[row for row in self.store.list_stories() if _row_is_lincolnshire(row)]
         areas=sorted({area for row in self.rows for area in decode_list(row["authorities_json"])},key=str.casefold)
         authors=sorted({str(row["author"] or "").strip() for row in self.rows if str(row["author"] or "").strip()},key=str.casefold)
         types=sorted({str(row["content_type"] or "").strip() for row in self.rows if str(row["content_type"] or "").strip()},key=str.casefold)
@@ -250,7 +275,7 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
         if self.selected is None: self._render_empty("Select a story to review its content.")
         summary = self.store.summary()
         latest = int(summary.get("latest_discovered") or 0)
-        self.status.configure(text=f"Loaded {len(self.rows):,} stored LDRS stories • latest refresh {latest:,} • {'API key configured' if has_api_key() else 'API key required'}")
+        self.status.configure(text=f"Loaded {len(self.rows):,} stored Lincolnshire LDRS stories • latest refresh {latest:,} • {'API key configured' if has_api_key() else 'API key required'}")
 
     def reset_filters(self):
         self._search_debounce.cancel(); self.search_var.set(""); self.area_var.set(ALL); self.author_var.set(ALL); self.type_var.set(ALL); self.period_var.set("All dates"); self.apply_filters()
@@ -345,7 +370,7 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
             while True:
                 item=self._queue.get_nowait(); kind=item[0]
                 if kind=="progress": self.status.configure(text=item[1])
-                elif kind=="done": self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.refresh_database(); self.status.configure(text=f"UPDATE PASSED • {item[1]:,} discovered • {item[2]:,} stored")
+                elif kind=="done": self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.refresh_database(); self.status.configure(text=f"UPDATE PASSED • {item[1]:,} Lincolnshire stories discovered • {item[2]:,} stored")
                 elif kind=="detail": self._working=False; self.refresh_database(); row=self.store.get(item[1]); self.select(row); self.status.configure(text="Full LDRS story and media downloaded")
                 elif kind=="detail_social": self._working=False; self.refresh_database(); row=self.store.get(item[1]); self.select(row); self.status.configure(text="Full LDRS story downloaded once and staged for socials"); self.after(50,self.add_to_social_desk)
                 elif kind=="tested": self._working=False; messagebox.showinfo("LDRS connection",f"Connection passed{(' for '+item[1]) if item[1] else ''}.",parent=self); self.status.configure(text="LDRS API-key connection passed")
@@ -411,7 +436,7 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
     def add_to_social_desk(self):
         if getattr(self, "selected", None) is None:
             return
-        if not int(self.selected["detail_complete"] or 0) or not str(self.selected["body"] or "").strip():
+        if _needs_detail_refresh(self.selected):
             self.status.configure(text="Downloading the full LDRS story before adding it to socials…")
             self.download_selected_detail(then_social=True)
             return

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from bs4 import BeautifulSoup, Tag
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from ..base import BaseConnector
 from ..html_utils import parse_datetime, parse_jsonld_events
@@ -116,7 +116,13 @@ class StructuredHtmlConnector(BaseConnector):
             self._enrich_detail_pages(events)
         if self.venue_filter:
             needle = self.venue_filter.casefold()
-            events = [e for e in events if needle in ((e.venue or "") + " " + str(e.raw.get("listing_text", ""))).casefold()]
+            events = [
+                e for e in events
+                if needle in " ".join((
+                    e.venue or "", str(e.raw.get("listing_text", "")),
+                    e.event_url or "", e.ticket_url or "",
+                )).casefold()
+            ]
         return self.normalize(events)
 
     def _enrich_detail_pages(self, events: list[EventRecord]) -> None:
@@ -131,8 +137,6 @@ class StructuredHtmlConnector(BaseConnector):
             url = event.event_url
             if not url or url in seen or fetched >= self.max_detail_pages:
                 continue
-            if all((event.description, event.image_url, event.category, event.price_text, event.age_restriction)) and event.start and (event.start.hour or event.start.minute):
-                continue
             seen.add(url); fetched += 1
             try:
                 response = self.get(url)
@@ -143,24 +147,30 @@ class StructuredHtmlConnector(BaseConnector):
                 event.raw.setdefault("detail_enrichment_error", str(exc))
 
     def _enrich_from_detail_html(self, event: EventRecord, html: str, page_url: str) -> None:
+        soup = BeautifulSoup(html, "html.parser")
+        page_matches_event = self._page_matches_event(soup, event.title)
         structured = parse_jsonld_events(html, source=self.source_name, base_url=page_url, source_rank=self.source_rank)
-        if structured:
+        if structured and page_matches_event:
             detail = structured[0]
-            for field in ("start","end","venue","room","address","town","county","postcode","latitude","longitude","category","description","image_url","ticket_url","price_text","status","age_restriction"):
+            for field in ("start","end","venue","room","address","town","county","postcode","latitude","longitude","category","image_url","ticket_url","price_text","status","age_restriction"):
                 if getattr(event, field) in (None, "") and getattr(detail, field) not in (None, ""):
                     setattr(event, field, getattr(detail, field))
-        soup = BeautifulSoup(html, "html.parser")
+            if self._is_richer_description(detail.description, event.description):
+                event.description = detail.description
+        self._infer_detail_category(event, soup, page_url)
+        detail_description = self._best_detail_description(soup, event.title) if page_matches_event else None
+        if self._is_richer_description(detail_description, event.description):
+            event.description = detail_description
         if not event.description:
-            node = soup.select_one("meta[name='description'],meta[property='og:description']")
+            node = soup.select_one("meta[property='og:description'],meta[name='description']")
             if node and node.get("content"):
                 event.description = str(node.get("content")).strip()
-            else:
-                node = soup.select_one(".description,.event-description,.summary,.intro,[class*='description'],[class*='summary']")
-                if node:
-                    event.description = node.get_text(" ", strip=True)
-        if not event.image_url:
+        detail_image = self._best_detail_image(soup, page_url, event.title) if page_matches_event else None
+        if detail_image and (not event.image_url or self._image_is_bad(event.image_url)):
+            event.image_url = detail_image
+        elif not event.image_url and page_matches_event:
             node = soup.select_one("meta[property='og:image'],meta[name='twitter:image']")
-            if node and node.get("content"):
+            if node and node.get("content") and not self._image_is_bad(str(node.get("content"))):
                 event.image_url = urljoin(page_url, str(node.get("content")))
         text = soup.get_text(" ", strip=True)
         if not event.price_text:
@@ -179,6 +189,181 @@ class StructuredHtmlConnector(BaseConnector):
                     event.start = event.start.replace(hour=parsed.hour, minute=parsed.minute, second=parsed.second)
                     break
         event.raw["detail_enriched"] = True
+        event.raw["detail_page_matches_event"] = page_matches_event
+
+    @classmethod
+    def _page_matches_event(cls, soup: BeautifulSoup, title: str | None) -> bool:
+        """Reject generic listing pages before borrowing their copy or image."""
+
+        target = set(cls._normal(title).split())
+        target -= {"the", "and", "at", "in", "of", "a", "an"}
+        if not target:
+            return False
+        candidates = []
+        for selector in ("h1", "meta[property='og:title']", "meta[name='twitter:title']"):
+            for node in soup.select(selector):
+                candidates.append(str(node.get("content") or node.get_text(" ", strip=True)))
+        for candidate in candidates:
+            words = set(cls._normal(candidate).split())
+            if len(target & words) >= max(1, min(3, len(target))):
+                return True
+        return False
+
+    @staticmethod
+    def _plain_description(value: str | None) -> str:
+        if not value:
+            return ""
+        return " ".join(BeautifulSoup(str(value), "html.parser").get_text(" ", strip=True).split())
+
+    @classmethod
+    def _is_richer_description(cls, candidate: str | None, current: str | None) -> bool:
+        candidate_text = cls._plain_description(candidate)
+        current_text = cls._plain_description(current)
+        if not candidate_text:
+            return False
+        generic = (
+            "buy tickets and see event information",
+            "find out more about this event",
+            "book tickets",
+            "event information",
+        )
+        current_is_generic = any(value in current_text.casefold() for value in generic)
+        return not current_text or current_is_generic or len(candidate_text) >= len(current_text) + 80
+
+    @staticmethod
+    def _normal(value: str | None) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", (value or "").casefold()).strip()
+
+    @classmethod
+    def _infer_detail_category(cls, event: EventRecord, soup: BeautifulSoup, page_url: str) -> None:
+        path = urlsplit(page_url).path.casefold()
+        breadcrumb = " ".join(node.get_text(" ", strip=True) for node in soup.select(
+            "nav[aria-label*='breadcrumb' i],.breadcrumb,[class*='breadcrumb']"
+        )).casefold()
+        if re.search(r"/(?:cinema|film)(?:/|$)", path) or (
+            "cinema" in breadcrumb and re.search(r"\bfilm\b", breadcrumb)
+        ):
+            event.category = "Film"
+
+    @classmethod
+    def _title_anchored_description(cls, soup: BeautifulSoup, title: str | None) -> str | None:
+        target = cls._normal(title)
+        if not target:
+            return None
+        matching = [
+            h for h in soup.find_all(["h1", "h2", "h3", "h4"])
+            if target in cls._normal(h.get_text(" ", strip=True))
+            or cls._normal(h.get_text(" ", strip=True)) in target
+        ]
+        if not matching:
+            return None
+        heading = min(matching, key=lambda h: abs(len(cls._normal(h.get_text(" ", strip=True))) - len(target)))
+        boundary = re.compile(
+            r"^(?:book tickets?|buy tickets?|venue information|more in .+|what(?:'|’)s on|"
+            r"search other.+|related events?|you may also like|share this|contact us|"
+            r"posted in:.+|copyright.+|.+owned and operated by.+|contact us\s*\|.+)$", re.I
+        )
+        fragments: list[str] = []
+        plain: list[str] = []
+        for node in heading.find_all_next(["h1", "h2", "h3", "h4", "p", "li"], limit=90):
+            value = " ".join(node.get_text(" ", strip=True).split())
+            if not value:
+                continue
+            clean = value.strip(" :.-")
+            if node.name in {"h1", "h2", "h3", "h4"} and boundary.search(clean):
+                break
+            if boundary.search(clean):
+                if fragments:
+                    break
+                continue
+            if node.name in {"p", "li"} and value not in plain:
+                if value.casefold().startswith(("cookie", "privacy")):
+                    continue
+                fragments.append(str(node))
+                plain.append(value)
+                if sum(map(len, plain)) >= 12000:
+                    break
+        return "\n".join(fragments) if sum(map(len, plain)) >= 80 else None
+
+    @classmethod
+    def _best_detail_description(cls, soup: BeautifulSoup, title: str | None = None) -> str | None:
+        anchored = cls._title_anchored_description(soup, title)
+        selectors = (
+            ".event-description", ".event-content", ".event-details",
+            "[class*='event-description']", "[class*='event-content']",
+            "[class*='event-detail']", ".event-copy", ".show-content",
+            ".page-content", "#content", "[role='main']", "#main",
+            "main article", "article", "main",
+        )
+        candidates: list[tuple[int, str]] = []
+        seen: set[int] = set()
+        for selector in selectors:
+            for original in soup.select(selector):
+                if id(original) in seen:
+                    continue
+                seen.add(id(original))
+                fragment = BeautifulSoup(str(original), "html.parser")
+                for unwanted in fragment.select("script,style,nav,footer,form,button,svg,noscript,aside"):
+                    unwanted.decompose()
+                text = " ".join(fragment.get_text(" ", strip=True).split())
+                if len(text) < 80:
+                    continue
+                links = len(fragment.select("a[href]"))
+                score = min(len(text), 12000) - max(0, links - 12) * 80
+                if title and cls._normal(title) in cls._normal(text):
+                    score += 500
+                if any(x in text.casefold() for x in ("undoubtedly plays a vital role", "cookie policy", "privacy policy")):
+                    score -= 3000
+                candidates.append((score, str(fragment)))
+        if anchored:
+            candidates.append((min(len(cls._plain_description(anchored)), 12000) + 2500, anchored))
+        return max(candidates, default=(0, None), key=lambda item: item[0])[1]
+
+    @staticmethod
+    def _image_is_bad(value: str | None, alt: str | None = None) -> bool:
+        evidence = f"{value or ''} {alt or ''}".casefold()
+        return any(token in evidence for token in (
+            "certificate", "age-rating", "age_rating", "rating-icon", "placeholder",
+            "spinner", "site-logo", "logo", "favicon", "blank.gif", "pixel.gif",
+        )) or bool(re.search(r"(?:^|[/_\-])(?:12a|15|18|pg|u)(?:[/_.\-]|$)", evidence))
+
+    @classmethod
+    def _best_detail_image(cls, soup: BeautifulSoup, page_url: str, title: str | None = None) -> str | None:
+        # Search the whole document: several venue themes render the hero beside,
+        # rather than inside, the textual event container.
+        scope = soup
+        candidates: list[tuple[int, str]] = []
+        target = cls._normal(title)
+        for image in scope.select("img"):
+            value = image.get("data-src") or image.get("data-lazy-src") or image.get("src")
+            srcset = image.get("data-srcset") or image.get("srcset")
+            if srcset:
+                entries = [part.strip().split()[0] for part in str(srcset).split(",") if part.strip()]
+                if entries:
+                    value = entries[-1]
+            alt = str(image.get("alt") or "")
+            if not value or str(value).startswith("data:") or cls._image_is_bad(str(value), alt):
+                continue
+            score = 0
+            try:
+                score += min(int(image.get("width") or 0) * int(image.get("height") or 0) // 1000, 5000)
+            except (TypeError, ValueError):
+                pass
+            evidence = f"{value} {alt} {' '.join(image.get('class') or [])}".casefold()
+            if target and target in cls._normal(alt):
+                score += 5000
+            if any(word in evidence for word in ("hero", "banner", "event", "featured")):
+                score += 1200
+            candidates.append((score, urljoin(page_url, str(value))))
+        for video in scope.select("video[poster]"):
+            poster = str(video.get("poster") or "")
+            if poster and not cls._image_is_bad(poster):
+                candidates.append((1800, urljoin(page_url, poster)))
+        for node in scope.select("[style*='background-image']"):
+            match = re.search(r"background-image\s*:\s*url\(['\"]?([^)'\"]+)", str(node.get("style") or ""), re.I)
+            if match and not cls._image_is_bad(match.group(1)):
+                candidates.append((1000, urljoin(page_url, match.group(1))))
+        return max(candidates, default=(0, None), key=lambda item: item[0])[1]
 
     def parse_cards(self, html: str) -> list[EventRecord]:
         soup = BeautifulSoup(html, "html.parser")
@@ -286,8 +471,15 @@ class StructuredHtmlConnector(BaseConnector):
         image = node.find("img")
         if image:
             src = image.get("src") or image.get("data-src") or image.get("data-lazy-src")
-            if src:
+            alt = str(image.get("alt") or "")
+            headings = node.select("h1,h2,h3,h4,.title,.event-title,[class*='event-title']")
+            title_words = set(self._normal(event.title).split())
+            image_words = set(self._normal(f"{src or ''} {alt}").split())
+            locally_unique = len(headings) <= 1
+            title_overlap = len(title_words & image_words) >= max(1, min(2, len(title_words)))
+            if src and (locally_unique or title_overlap):
                 event.image_url = urljoin(self.url, str(src))
+                event.raw["listing_image_confidence"] = "title-match" if title_overlap else "single-event-card"
         desc = node.select_one(".description,.summary,.excerpt,[class*='description'],[class*='summary'],[class*='excerpt']")
         if desc:
             event.description = desc.get_text(" ", strip=True)

@@ -20,6 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from newsdesk.story import Story
+from newsdesk.sports.media_policy import is_still_image_url
 
 
 class BaseRssScraper:
@@ -35,7 +36,7 @@ class BaseRssScraper:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/150.0 Safari/537.36 "
-            "BassetlawToday-NewsDesk/1.0"
+            "DevourLincolnshire-NewsDesk/1.0"
         ),
         "Accept": (
             "application/rss+xml,application/xml,text/xml,"
@@ -534,7 +535,7 @@ class BaseRssScraper:
                 raw_candidate,
                 base_url,
             )
-            if not candidate:
+            if not candidate or not is_still_image_url(candidate):
                 continue
 
             key = candidate.casefold()

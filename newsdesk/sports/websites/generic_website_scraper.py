@@ -18,6 +18,7 @@ import soupsieve
 from newsdesk.sources.base_scraper import BaseScraper, ScrapeResponse
 from newsdesk.sports.websites.source import WebsiteSource
 from newsdesk.story import Story
+from newsdesk.sports.media_policy import is_still_image_url
 
 
 LOGGER = logging.getLogger(__name__)
@@ -32,7 +33,9 @@ class GenericWebsiteScraper(BaseScraper):
     shared ``ArticleScraper``.
     """
 
-    DEFAULT_MAX_AGE_DAYS = 3
+    # Source listings already cap their result count.  Sport is an information
+    # feed, so age does not decide inclusion; dates decide display order.
+    DEFAULT_MAX_AGE_DAYS = None
 
     DEFAULT_LINK_SELECTORS = (
         "article a[href]",
@@ -334,8 +337,23 @@ class GenericWebsiteScraper(BaseScraper):
         return stories
 
     def _candidate_anchors(self, soup: BeautifulSoup) -> list[Tag]:
+        route = str(self.definition.metadata.get("collector_route", ""))
+        route_selectors = {
+            "pitchero": (
+                "a[href*='/news/']",
+                "a[href*='/news']",
+                "article a[href]",
+            ),
+            "club-cms": (
+                "a[href*='/news/']",
+                "a[href*='/news']",
+                "article a[href]",
+                "main a[href]",
+            ),
+        }.get(route, ())
         selectors = (
             self.definition.article_link_selectors
+            or list(route_selectors)
             or list(self.DEFAULT_LINK_SELECTORS)
         )
 
@@ -1331,21 +1349,17 @@ class GenericWebsiteScraper(BaseScraper):
         published_at: datetime | None,
     ) -> str:
         if published_at is None:
-            return "missing-publication-date"
+            return ""
 
         now = datetime.now(timezone.utc)
-        if published_at < now - timedelta(days=self._max_age_days()):
-            return "story-too-old"
         if published_at > now + timedelta(hours=24):
             return "story-date-in-future"
+        if published_at < now - timedelta(days=7):
+            return "story-older-than-seven-days"
         return ""
 
     def _max_age_days(self) -> int:
-        configured = self.definition.metadata.get("max_age_days")
-        try:
-            return max(1, int(configured)) if configured is not None else self.DEFAULT_MAX_AGE_DAYS
-        except (TypeError, ValueError):
-            return self.DEFAULT_MAX_AGE_DAYS
+        return 7
 
     def _log_recency_rejection(
         self,
@@ -1354,15 +1368,11 @@ class GenericWebsiteScraper(BaseScraper):
         published_at: datetime | None,
         reason: str,
     ) -> None:
-        cutoff = datetime.now(timezone.utc) - timedelta(
-            days=self._max_age_days()
-        )
         LOGGER.debug(
             "candidate URL=%s parsed publication date=%s "
-            "current cutoff date=%s rejected reason=%s",
+            "rejected reason=%s",
             url,
             published_at.isoformat() if published_at else "missing",
-            cutoff.isoformat(),
             reason,
         )
 
@@ -1398,7 +1408,10 @@ class GenericWebsiteScraper(BaseScraper):
 
             image_url = urljoin(base_url, candidate)
             lowered = image_url.casefold()
-            if any(part in lowered for part in ("emoji", "avatar", "logo")):
+            if (
+                not is_still_image_url(image_url)
+                or any(part in lowered for part in ("emoji", "avatar", "logo"))
+            ):
                 continue
 
             return image_url

@@ -77,7 +77,10 @@ class SocialDraft:
     title: str = ""
     text: str = ""
     source_url: str = ""
+    internal_source_url: str = ""
+    include_source_url: bool = True
     image_url: str = ""
+    local_image_path: str = ""
     image_caption: str = ""
     image_credit: str = ""
     image_rights_status: str = "no image"
@@ -118,7 +121,16 @@ class SocialDraftStore:
         wanted = self.normalise_url(source_url)
         if not wanted:
             return None
-        return next((item for item in drafts if self.normalise_url(item.source_url) == wanted), None)
+        return next(
+            (
+                item for item in drafts
+                if wanted in {
+                    self.normalise_url(item.source_url),
+                    self.normalise_url(item.internal_source_url),
+                }
+            ),
+            None,
+        )
 
 
 class SocialSettingsStore:
@@ -126,10 +138,10 @@ class SocialSettingsStore:
         self.path = path or SOCIAL_DIR / "metricool.json"
 
     def load(self) -> dict[str, str]:
-        result = {"user_id": "", "blog_id": "", "brand_name": "", "timezone": "Europe/London", "token": ""}
+        result = {"user_id": "", "blog_id": "", "brand_name": "", "timezone": "Europe/London", "token": "", "verified_at": "", "connected_networks": ""}
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            for key in ("user_id", "blog_id", "brand_name", "timezone"):
+            for key in ("user_id", "blog_id", "brand_name", "timezone", "verified_at", "connected_networks"):
                 result[key] = str(data.get(key) or result[key])
             result["token"] = _unprotect(str(data.get("protected_token") or ""))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
@@ -138,11 +150,13 @@ class SocialSettingsStore:
 
     def save(self, settings: dict[str, str]) -> None:
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "user_id": str(settings.get("user_id") or "").strip(),
             "blog_id": str(settings.get("blog_id") or "").strip(),
             "brand_name": str(settings.get("brand_name") or "").strip(),
             "timezone": str(settings.get("timezone") or "Europe/London").strip(),
+            "verified_at": str(settings.get("verified_at") or "").strip(),
+            "connected_networks": str(settings.get("connected_networks") or "").strip(),
             "protected_token": _protect(str(settings.get("token") or "").strip()),
         }
         _atomic_json(self.path, payload)

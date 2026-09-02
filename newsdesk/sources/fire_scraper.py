@@ -1,6 +1,6 @@
-"""Nottinghamshire Fire and Rescue Service news scraper.
+"""Lincolnshire Fire and Rescue news scraper.
 
-This module owns Nottinghamshire Fire and Rescue Service-specific navigation,
+This module owns Lincolnshire County Council Fire and Rescue navigation,
 classification, location detection and Story construction. Generic article
 HTML extraction is delegated to :class:`ArticleScraper`.
 """
@@ -16,16 +16,18 @@ import re
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
+import requests
 
 from newsdesk.sources.article_scraper import ArticleScraper
 from newsdesk.sources.base_scraper import BaseScraper, ScrapeResponse
+from newsdesk.geography import story_matches_lincolnshire
 from newsdesk.story import Story
 
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAX_AGE_DAYS = 14
 FUTURE_ALLOWANCE_HOURS = 24
-MAX_LISTING_PAGES = 20
+MAX_LISTING_PAGES = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +51,13 @@ def _parse_fire_publication_datetime(value: object) -> datetime | None:
         raw = str(value).strip()
         if not raw:
             return None
-        raw = re.sub(r"^posted\s+on\s+", "", raw, flags=re.IGNORECASE)
+        raw = re.sub(
+            r"^(?:posted\s+on|published)\s*:?\s*",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        raw = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", raw, flags=re.IGNORECASE)
         parsed = None
         for part in (item.strip() for item in re.split(r"\s*[•|]\s*", raw)):
             if not part:
@@ -67,6 +75,8 @@ def _parse_fire_publication_datetime(value: object) -> datetime | None:
                     "%H:%M %d %b %Y",
                     "%d/%m/%Y",
                     "%d/%m/%Y %H:%M",
+                    "%a %d %b %Y %H:%M",
+                    "%a %d %B %Y %H:%M",
                 ):
                     try:
                         parsed = datetime.strptime(part, date_format)
@@ -110,8 +120,8 @@ def _fire_recency_rejection_reason(
 
 
 class FireScraper(BaseScraper):
-    BASE_URL = "https://www.notts-fire.gov.uk"
-    NEWS_URL = f"{BASE_URL}/news/"
+    BASE_URL = "https://www.lincolnshire.gov.uk"
+    NEWS_URL = f"{BASE_URL}/news"
     DEFAULT_LIMIT = 20
 
     ARTICLE_BODY_SELECTOR = "main, article"
@@ -131,7 +141,7 @@ class FireScraper(BaseScraper):
             raise ValueError("limit must be greater than zero.")
 
         super().__init__(
-            source_name="Nottinghamshire Fire and Rescue Service",
+            source_name="Lincolnshire Fire and Rescue",
             source_url=self.NEWS_URL,
             timeout=timeout,
             request_delay=request_delay,
@@ -151,11 +161,15 @@ class FireScraper(BaseScraper):
         candidates, diagnostics = self._discover_recent_candidates(response)
         stories: list[Story] = []
 
-        for candidate in candidates:
+        for candidate in candidates[: self.limit]:
             try:
                 story = self._parse_article_url(candidate.url)
 
-                if story.title and (story.body or story.summary):
+                if (
+                    story.title
+                    and (story.body or story.summary)
+                    and self._is_fire_content(story)
+                ):
                     if (
                         _parse_fire_publication_datetime(story.published) is None
                         and candidate.published is not None
@@ -196,6 +210,24 @@ class FireScraper(BaseScraper):
             len(stories),
         )
         return stories
+
+    @staticmethod
+    def _is_fire_content(story: Story) -> bool:
+        """Exclude unrelated county-council news from the shared news index."""
+
+        text = " ".join(
+            str(value or "")
+            for value in (story.title, story.summary, story.body, story.category)
+        ).casefold()
+        return any(
+            term in text
+            for term in (
+                "fire and rescue", "fire service", "firefighter", "fire crew",
+                "fire engine", "fire station", "fire safety", "smoke alarm",
+                "wildfire", "house fire", "building fire", "shed fire",
+                "vehicle fire", "caravan fire", "blaze", "arson",
+            )
+        )
 
     def _discover_recent_candidates(
         self,
@@ -297,7 +329,11 @@ class FireScraper(BaseScraper):
     ) -> list[_FireListingCandidate]:
         soup = BeautifulSoup(html, "html.parser")
         candidates: list[_FireListingCandidate] = []
-        for card in soup.select("li.searchList"):
+        cards = soup.select(
+            "li.searchList, article, .news-item, .listing-item, "
+            ".search-result, main li"
+        )
+        for card in cards:
             anchor = card.select_one("a[href]")
             if anchor is None:
                 continue
@@ -305,8 +341,13 @@ class FireScraper(BaseScraper):
             if not self._is_article_url(url):
                 continue
             text = card.get_text(" ", strip=True)
+            if not self._looks_like_fire_listing(
+                f"{anchor.get_text(' ', strip=True)} {text}"
+            ):
+                continue
             match = re.search(
-                r"\bPosted\s+on\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})",
+                r"\b(?:Posted\s+on|Published)\s*:?\s*"
+                r"(\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4})",
                 text,
                 flags=re.IGNORECASE,
             )
@@ -320,6 +361,19 @@ class FireScraper(BaseScraper):
                 )
             )
         return candidates
+
+    @staticmethod
+    def _looks_like_fire_listing(text: str) -> bool:
+        lowered = str(text or "").casefold()
+        return any(
+            term in lowered
+            for term in (
+                "fire and rescue", "fire service", "firefighter", "fire crew",
+                "fire engine", "fire station", "fire safety", "smoke alarm",
+                "wildfire", "house fire", "building fire", "shed fire",
+                "vehicle fire", "caravan fire", "blaze", "arson",
+            )
+        )
 
     def _extract_next_listing_url(self, html: str, page_url: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
@@ -344,10 +398,9 @@ class FireScraper(BaseScraper):
         parsed = urlparse(value)
         path = parsed.path.rstrip("/") + "/"
         return (
-            parsed.netloc.casefold() in {"www.notts-fire.gov.uk", "notts-fire.gov.uk"}
-            and path.startswith("/news/")
-            and path != "/news/"
-            and not any(part in path for part in ("/page/", "/category/", "/tag/", "/media-enquiries/"))
+            parsed.netloc.casefold()
+            in {"www.lincolnshire.gov.uk", "lincolnshire.gov.uk"}
+            and path.startswith("/news/article/")
         )
 
     @staticmethod
@@ -380,12 +433,12 @@ class FireScraper(BaseScraper):
             path = parsed.path.rstrip("/") + "/"
 
             if parsed.netloc not in {
-                "www.notts-fire.gov.uk",
-                "notts-fire.gov.uk",
+                "www.lincolnshire.gov.uk",
+                "lincolnshire.gov.uk",
             }:
                 continue
 
-            if not path.startswith("/news/") or path == "/news/":
+            if not path.startswith("/news/article/"):
                 continue
 
             if any(
@@ -465,6 +518,12 @@ class FireScraper(BaseScraper):
     ) -> Story:
         title = self._first_text(soup, ("main h1", "article h1", "h1"))
         published = self._published(soup)
+        parsed_published = _parse_fire_publication_datetime(published)
+        if parsed_published is not None:
+            # Store one canonical value.  The Fire UI and Social Desk both
+            # understand ISO dates; ordinal display text such as "25th
+            # August" was previously shown as "Date unavailable".
+            published = parsed_published.isoformat()
 
         paragraphs = [
             self._clean(part)
@@ -494,7 +553,7 @@ class FireScraper(BaseScraper):
             title=title,
             summary=summary,
             body=body,
-            source="Nottinghamshire Fire and Rescue Service",
+            source="Lincolnshire Fire and Rescue",
             url=article_url,
             published=published,
             location=location,
@@ -502,7 +561,7 @@ class FireScraper(BaseScraper):
             image_url=image_url,
             image_caption=caption,
             image_credit=(
-                "Nottinghamshire Fire and Rescue Service"
+                "Lincolnshire County Council / Lincolnshire Fire and Rescue"
                 if image_url
                 else ""
             ),
@@ -605,7 +664,8 @@ class FireScraper(BaseScraper):
 
         text = soup.get_text(" ", strip=True)        
         match = re.search(
-            r"Posted on\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})",
+            r"(?:Posted on|Published)\s*:?\s*"
+            r"(\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4})",
             text,
             re.IGNORECASE,
         )
@@ -698,16 +758,13 @@ class FireScraper(BaseScraper):
     @staticmethod
     def _location(text: str) -> str:
         places = (
-            "Worksop",
-            "Retford",
-            "Harworth",
-            "Bircotes",
-            "Misterton",
-            "Tuxford",
-            "Carlton-in-Lindrick",
-            "Langold",
-            "Bassetlaw",
-            "Nottinghamshire",
+            "Lincolnshire", "Lincoln", "Boston", "Grantham", "Spalding",
+            "Skegness", "Gainsborough", "Sleaford", "Stamford", "Louth",
+            "Horncastle", "Bourne", "Market Rasen", "Mablethorpe", "Alford",
+            "Holbeach", "Long Sutton", "Woodhall Spa", "North Hykeham",
+            "South Kesteven", "North Kesteven", "East Lindsey", "West Lindsey",
+            "South Holland", "Cleethorpes", "Grimsby", "Scunthorpe",
+            "Immingham", "Barton-upon-Humber", "Brigg",
         )
         lowered = text.casefold()
 
@@ -718,4 +775,135 @@ class FireScraper(BaseScraper):
         return ""
 
 
-__all__ = ["FireScraper"]
+class HumbersideFireIncidentScraper(BaseScraper):
+    """Collect individual northern-Lincolnshire incidents from the live log."""
+
+    NEWS_URL = "https://humbersidefire.gov.uk/newsroom/latest-incidents"
+
+    def __init__(self, *, timeout: float = 30.0, request_delay: float = 0.35) -> None:
+        super().__init__(
+            source_name="Humberside Fire and Rescue Service",
+            source_url=self.NEWS_URL,
+            timeout=timeout,
+            request_delay=request_delay,
+        )
+
+    def close(self) -> None:
+        """Compatibility method; this scraper does not keep a browser open."""
+
+    def fetch_latest_news(self) -> list[Story]:
+        return self.get_stories(refresh=True, deduplicate=True)
+
+    def fetch(self, url: str | None = None) -> ScrapeResponse:
+        """Fetch the live log with browser-compatible HTTP handling.
+
+        The Humberside site can return different content to urllib on
+        Windows.  Requests also handles compressed responses consistently.
+        """
+
+        target = str(url or self.NEWS_URL)
+        headers = self._build_headers()
+        headers.update(
+            {
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                    "image/avif,image/webp,*/*;q=0.8"
+                ),
+                "Accept-Language": "en-GB,en;q=0.9",
+                "Cache-Control": "no-cache",
+                "Referer": "https://humbersidefire.gov.uk/newsroom",
+            }
+        )
+        response = requests.get(
+            target,
+            headers=headers,
+            timeout=self.timeout,
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+        return ScrapeResponse(
+            url=str(response.url),
+            body=response.text,
+            status_code=int(response.status_code),
+            content_type=str(response.headers.get("Content-Type", "")),
+            encoding=str(response.encoding or "utf-8"),
+            headers={str(key): str(value) for key, value in response.headers.items()},
+        )
+
+    def parse(self, response: ScrapeResponse) -> Iterable[Story]:
+        soup = BeautifulSoup(response.body, "html.parser")
+        main = soup.select_one("main") or soup
+        stories: list[Story] = []
+        now = datetime.now(timezone.utc)
+
+        for heading in main.find_all("h3"):
+            title = FireScraper._clean(heading.get_text(" ", strip=True))
+            if not title:
+                continue
+            parts: list[str] = []
+            node = heading.find_next_sibling()
+            while node is not None and getattr(node, "name", "") != "h3":
+                text = FireScraper._clean(node.get_text(" ", strip=True))
+                if text:
+                    parts.append(text)
+                node = node.find_next_sibling()
+            combined = "\n\n".join(parts)
+            date_match = re.search(
+                r"Date\s*&\s*Time:\s*([^\n(]+?)"
+                r"\s*\(No:\s*([^)]+)\)",
+                combined,
+                flags=re.IGNORECASE,
+            )
+            if date_match is None:
+                continue
+            raw_date = date_match.group(1).strip()
+            incident_number = (date_match.group(2) or "").strip()
+            parsed_date = _parse_fire_publication_datetime(raw_date)
+            _, rejection = _fire_recency_rejection_reason(parsed_date, now=now)
+            if rejection is not None:
+                continue
+
+            description = combined.split("Date & Time:", 1)[0].strip()
+            type_match = re.search(r"Incident Type:\s*([^\n]+)", combined, re.I)
+            incident_type = FireScraper._clean(type_match.group(1)) if type_match else "Incident"
+            story = Story(
+                title=title,
+                summary=description,
+                body="\n\n".join(
+                    value for value in (
+                        description,
+                        f"Date and time: {raw_date}",
+                        f"Incident number: {incident_number}" if incident_number else "",
+                        f"Incident type: {incident_type}",
+                    ) if value
+                ),
+                source="Humberside Fire and Rescue Service",
+                url=(
+                    f"{self.NEWS_URL}#incident-{incident_number}"
+                    if incident_number else self.NEWS_URL
+                ),
+                published=parsed_date.isoformat() if parsed_date else raw_date,
+                location=title.rstrip(". "),
+                category="Incident",
+                image_credit="Humberside Fire and Rescue Service",
+                scraped_at=now.isoformat(),
+                tags=["Fire and Rescue", "Incident", incident_type],
+            )
+            match = story_matches_lincolnshire(story)
+            if not match.matched:
+                continue
+            story.extras.update(
+                {
+                    "source_module": "fire",
+                    "source_key": "humberside_fire_incidents_lincolnshire",
+                    "incident_number": incident_number,
+                    "incident_type": incident_type,
+                    "geographic_filter": "lincolnshire",
+                    "geographic_matches": list(match.places),
+                }
+            )
+            stories.append(story)
+        return stories
+
+
+__all__ = ["FireScraper", "HumbersideFireIncidentScraper"]

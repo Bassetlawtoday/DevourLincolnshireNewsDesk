@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 from newsdesk.sports.websites.source import WebsiteSource
 
@@ -39,11 +40,33 @@ class WebsiteSourceLoader:
             raise ValueError("The 'sources' value must be a list.")
 
         sources = [WebsiteSource.from_dict(item) for item in raw_sources]
+        for source in sources:
+            source.metadata.setdefault(
+                "collector_route",
+                self._collector_route(source.listing_url),
+            )
 
         if enabled_only:
             sources = [source for source in sources if source.enabled]
 
         return sources
+
+    @staticmethod
+    def _collector_route(url: str) -> str:
+        """Classify shared website platforms without per-club collectors."""
+
+        host = (urlparse(str(url or "")).hostname or "").casefold()
+        if host == "fulltime.thefa.com":
+            return "fa-fulltime"
+        if host.endswith("pitchero.com"):
+            return "pitchero"
+        if host in {
+            "www.weareimps.com",
+            "www.bostonunited.co.uk",
+            "www.scunthorpe-united.co.uk",
+        }:
+            return "club-cms"
+        return "official-website"
 
 
 __all__ = ["DEFAULT_CONFIG_PATH", "WebsiteSourceLoader"]

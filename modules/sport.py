@@ -43,7 +43,7 @@ from newsdesk.ui_support import (
     maximize_window,
 )
 from newsdesk.sports.sport_scraper import SportScraper
-from editorial.priority_engine import rank_stories, score_story
+from newsdesk.feed_policy import prepare_lincolnshire_feed, published_datetime
 
 
 LOGGER = logging.getLogger(__name__)
@@ -56,31 +56,21 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
     ALL_SPORTS = "All sports"
     ALL_SOURCES = "All clubs and sources"
     ALL_AREAS = "All localities"
-    ALL_PRIORITIES = "All priorities"
     DEFAULT_SORT = "Newest first"
-    EDITORIAL_SORT = "Editorial priority"
     QUEUE_RENDER_LIMIT = 100
 
     AREA_FILTERS = (
         ALL_AREAS,
-        "Bassetlaw only",
-        "Non-Bassetlaw",
-    )
-    PRIORITY_FILTER_ORDER = (
-        "Immediate",
-        "Urgent",
-        "Routine",
-        "Editor review",
-        "Monitor",
+        "Lincolnshire",
+        "North Lincolnshire",
+        "North East Lincolnshire",
+        "Regional Lincolnshire matches",
     )
     SORT_OPTIONS = (
         DEFAULT_SORT,
         "Oldest first",
-        "Highest score",
-        "Lowest score",
         "Title A\u2013Z",
         "Title Z\u2013A",
-        EDITORIAL_SORT,
     )
 
     def __init__(self, master=None):
@@ -132,7 +122,7 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         self.header = NewsDeskHeader(
             self,
             module_title="Sport Intelligence",
-            subtitle="Collect  •  Classify  •  Review  •  Publish",
+            subtitle="Collect  •  Lincolnshire  •  Review  •  Publish",
             primary_button_text="REFRESH SPORT NEWS",
             primary_command=self._refresh_sport_news,
             close_command=self._window_support.close,
@@ -181,9 +171,9 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         self.stat_labels = {}
 
         statistics = (
-            ("immediate", "IMMEDIATE", "0", IMMEDIATE),
-            ("urgent", "URGENT", "0", URGENT),
-            ("routine", "ROUTINE", "0", ROUTINE),
+            ("today", "TODAY", "0", SUCCESS),
+            ("recent", "PREVIOUS 3 DAYS", "0", TEXT_PRIMARY),
+            ("older", "OLDER", "0", TEXT_MUTED),
             ("review", "SELECTED STORY", "0", ACCENT),
             ("total", "TOTAL STORIES", "0", SUCCESS),
         )
@@ -287,8 +277,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
 
         # Temporary compatibility aliases for code that still reads the
         # filter control directly. These can disappear when the remaining
-        # Sport window components are migrated.
-        self.filter_menu = self.priority_filter_menu
         self.queue_count_label = self.story_queue.queue_count_label
 
     def _build_queue_filter_controls(self, parent):
@@ -364,20 +352,12 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             row=2,
             column=0,
         )
-        self.priority_filter_menu = self._queue_filter_menu(
-            controls,
-            label="Priority",
-            values=(self.ALL_PRIORITIES,),
-            row=2,
-            column=1,
-        )
         self.sort_menu = self._queue_filter_menu(
             controls,
             label="Sort",
             values=self.SORT_OPTIONS,
-            row=3,
-            column=0,
-            columnspan=2,
+            row=2,
+            column=1,
             bottom_padding=10,
         )
 
@@ -631,7 +611,7 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             text="COLLECTING...",
         )
         self.status_label.configure(
-            text="Status: Collecting the latest Nottinghamshire Sport reports..."
+            text="Status: Collecting the latest Lincolnshire Sport reports..."
         )
         self.collection_progress.grid()
         self.collection_progress.start()
@@ -650,6 +630,7 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             stories = collection.stories
             results = collection.publish_results
             errors = collection.errors
+            source_health = collection.source_health
 
             self.after(
                 0,
@@ -661,13 +642,15 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
                 ),
             )
 
-            self.after(
+            self._window_support.call_later_guarded(
                 0,
                 lambda: self._collection_complete(
                     stories,
                     results,
                     errors,
+                    source_health=source_health,
                 ),
+                on_error=self._collection_failed,
             )
 
         except Exception as error:
@@ -678,7 +661,14 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
                 lambda message=error_message: self._collection_failed(message),
             )
 
-    def _collection_complete(self, stories, results, errors, notify_dashboard=True):
+    def _collection_complete(
+        self,
+        stories,
+        results,
+        errors,
+        notify_dashboard=True,
+        source_health=None,
+    ):
         incoming_stories = list(stories)
         filtered_stories = SportScraper._filter_recent_stories(
             incoming_stories,
@@ -688,7 +678,7 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         removed_count = len(incoming_stories) - len(filtered_stories)
         if removed_count:
             LOGGER.warning(
-                "Sport UI safety boundary removed %d stale or invalid "
+                "Sport UI safety boundary removed %d future-dated "
                 "stories supplied by the collection layer.",
                 removed_count,
             )
@@ -698,13 +688,13 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             for story_id, result in dict(results).items()
             if story_id in kept_ids
         }
-        self._score_collected_stories(filtered_stories)
-        ranked, overflow = rank_stories(
-            filtered_stories,
-            module="sport",
-            visible_limit=max(1, len(filtered_stories)),
-        )
-        self.stories = [*ranked, *overflow]
+        self.stories = prepare_lincolnshire_feed(filtered_stories)
+        retained_ids = {id(story) for story in self.stories}
+        self.publish_results = {
+            story_id: result
+            for story_id, result in self.publish_results.items()
+            if story_id in retained_ids
+        }
         self.selected_story = None
         self.selected_result = None
         self.is_refreshing = False
@@ -724,17 +714,22 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         processed = len(self.publish_results)
         total = len(self.stories)
 
-        if errors:
-            self.status_label.configure(
-                text=(
-                    f"Status: Loaded {total} sport stories; "
-                    f"{processed} processed successfully."
-                )
+        health = list(source_health or [])
+        yielding = sum(1 for row in health if row.get("status") == "yielding")
+        reached = sum(1 for row in health if row.get("status") != "failed")
+        failed = sum(1 for row in health if row.get("status") == "failed")
+        health_text = (
+            f" Sources: {yielding} yielding, {reached - yielding} with no stories, "
+            f"{failed} failed."
+            if health
+            else ""
+        )
+        self.status_label.configure(
+            text=(
+                f"Status: Loaded {total} sport stories; "
+                f"{processed} processed successfully.{health_text}"
             )
-        else:
-            self.status_label.configure(
-                text=f"Status: Loaded {total} sport stories."
-            )
+        )
 
         if notify_dashboard:
             self._window_support.notify_story_refresh(
@@ -761,7 +756,7 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         self.collection_progress.stop()
         self.collection_progress.grid_remove()
         self.status_label.configure(
-            text="Status: Police news collection failed."
+            text="Status: Sport news collection failed."
         )
 
         messagebox.showerror(
@@ -772,10 +767,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         )
 
     def _apply_filter(self, selected_filter):
-        if selected_filter == "All stories":
-            selected_filter = self.ALL_PRIORITIES
-        if selected_filter in self.priority_filter_menu.cget("values"):
-            self.priority_filter_menu.set(selected_filter)
         self._refresh_visible_queue()
 
     def _on_search_changed(self, *_args):
@@ -794,23 +785,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
                 self.source_filter_menu,
                 (self.ALL_SOURCES, *self._distinct_source_values()),
                 self.ALL_SOURCES,
-            )
-            present_priorities = {
-                self._filter_priority_label(story)
-                for story in self.stories
-            }
-            priority_values = (
-                self.ALL_PRIORITIES,
-                *(
-                    priority
-                    for priority in self.PRIORITY_FILTER_ORDER
-                    if priority in present_priorities
-                ),
-            )
-            self._configure_filter_menu(
-                self.priority_filter_menu,
-                priority_values,
-                self.ALL_PRIORITIES,
             )
         finally:
             self._updating_filter_controls = False
@@ -885,55 +859,11 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         )
         return " ".join(str(value or "") for value in values).casefold()
 
-    def _is_bassetlaw_story(self, story):
-        extras = self._story_extras(story)
-        if any(
-            bool(extras.get(key))
-            for key in (
-                "local_club_priority",
-                "matched_local_club",
-                "matched_local_sport_entity",
-            )
-        ):
-            return True
-
-        editorial_class = extras.get("sport_editorial_class", 0)
-        try:
-            if int(editorial_class or 0) >= 2:
-                return True
-        except (TypeError, ValueError):
-            pass
-
-        locality_text = " ".join(
-            str(value or "")
-            for value in (
-                getattr(story, "location", ""),
-                extras.get("editorial_zone", ""),
-                extras.get("editorial_zone_label", ""),
-                extras.get("matched_place", ""),
-                extras.get("sport_editorial_class_label", ""),
-                extras.get("source_organisation", ""),
-            )
-        ).casefold()
-        return "bassetlaw" in locality_text
-
-    def _filter_priority_label(self, story):
-        extras = self._story_extras(story)
-        level = str(
-            extras.get("priority_level")
-            or getattr(story, "priority", "")
-            or ""
-        ).strip().casefold()
-        if level == "monitor":
-            return "Monitor"
-        return self._priority_label(story)
-
     def _combined_filtered_stories(self):
         query = self.search_var.get().strip().casefold()
         selected_sport = self.sport_filter_menu.get()
         selected_source = self.source_filter_menu.get()
         selected_area = self.area_filter_menu.get()
-        selected_priority = self.priority_filter_menu.get()
 
         visible = []
         for story in self.stories:
@@ -951,16 +881,21 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
                 != selected_source.casefold()
             ):
                 continue
-            is_bassetlaw = self._is_bassetlaw_story(story)
-            if selected_area == "Bassetlaw only" and not is_bassetlaw:
-                continue
-            if selected_area == "Non-Bassetlaw" and is_bassetlaw:
-                continue
-            if (
-                selected_priority != self.ALL_PRIORITIES
-                and self._filter_priority_label(story) != selected_priority
-            ):
-                continue
+            if selected_area != self.ALL_AREAS:
+                extras = self._story_extras(story)
+                location_text = " ".join(
+                    str(value or "")
+                    for value in (
+                        getattr(story, "location", ""),
+                        extras.get("location", ""),
+                        extras.get("geographic_matches", ""),
+                    )
+                ).casefold()
+                if selected_area == "Regional Lincolnshire matches":
+                    if not extras.get("geographic_filter"):
+                        continue
+                elif selected_area.casefold() not in location_text:
+                    continue
             visible.append(story)
         return visible
 
@@ -968,8 +903,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         stories = list(stories)
         selected_sort = self.sort_menu.get()
 
-        if selected_sort == self.EDITORIAL_SORT:
-            return stories
         if selected_sort == "Newest first":
             return sorted(
                 stories,
@@ -987,10 +920,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
                     self._published_timestamp(story) or 0.0,
                 ),
             )
-        if selected_sort == "Highest score":
-            return sorted(stories, key=self._story_score, reverse=True)
-        if selected_sort == "Lowest score":
-            return sorted(stories, key=self._story_score)
         if selected_sort == "Title A\u2013Z":
             return sorted(
                 stories,
@@ -1027,7 +956,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             self.sport_filter_menu.set(self.ALL_SPORTS)
             self.source_filter_menu.set(self.ALL_SOURCES)
             self.area_filter_menu.set(self.ALL_AREAS)
-            self.priority_filter_menu.set(self.ALL_PRIORITIES)
             self.sort_menu.set(self.DEFAULT_SORT)
         finally:
             self._updating_filter_controls = False
@@ -1109,25 +1037,15 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             or ""
         ).strip()
         published = format_uk_date(getattr(story, "published", ""))
-        score = self._story_score(story)
-
         queue_source = location or source
-        queue_published = " • ".join(
-            value
-            for value in (
-                published,
-                f"Score {score}",
-            )
-            if value
-        )
 
         return {
             "id": id(story),
             "title": story.title or "Untitled sport story",
             "summary": story.summary or "",
-            "priority": self._priority_label(story),
+            "priority": "",
             "source": queue_source,
-            "published": queue_published,
+            "published": published,
             "story": story,
         }
 
@@ -1170,9 +1088,7 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
 
 
 
-        self.selection_status_label.configure(
-            text=self._priority_label(story).upper()
-        )
+        self.selection_status_label.configure(text="LINCOLNSHIRE")
         self.stat_labels["review"].configure(text="1")
 
         self._workspace_label(
@@ -1186,7 +1102,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             for value in (
                 str(story.source or "").strip(),
                 format_uk_date(story.published),
-                self._priority_label(story),
             )
             if value
         )
@@ -1214,35 +1129,17 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         decision = str(story.editorial_decision or "").strip()
         tags = ", ".join(story.tags or [])
         extras = getattr(story, "extras", {}) or {}
-        score = extras.get("priority_score", 0)
-        rating = extras.get("priority_rating", 0)
-        priority_level = extras.get("priority_level", "")
-        zone = extras.get("editorial_zone_label", "")
-        matched_place = extras.get("matched_place", "")
-        reasons = extras.get("priority_reasons", []) or []
-
         editorial_parts = []
-        editorial_parts.append(f"Editorial score: {score}")
-        if rating:
-            editorial_parts.append(f"Rating: {'★' * int(rating)}{'☆' * (5 - int(rating))}")
-        if priority_level:
-            editorial_parts.append(f"Priority level: {priority_level}")
-        if zone:
-            editorial_parts.append(f"Editorial zone: {zone}")
-        if matched_place:
-            editorial_parts.append(f"Matched place: {matched_place}")
         if classification:
             editorial_parts.append(f"Classification: {classification}")
         if decision:
             editorial_parts.append(f"Editorial decision: {decision}")
         if tags:
             editorial_parts.append(f"Tags: {tags}")
-        if reasons:
-            editorial_parts.append("Scoring reasons:\n• " + "\n• ".join(str(item) for item in reasons))
 
         if editorial_parts:
             self._workspace_section(
-                "EDITORIAL INFORMATION",
+                "STORY INFORMATION",
                 "\n\n".join(editorial_parts),
             )
 
@@ -2008,17 +1905,9 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
                 ),
                 "quality": quality,
             },
-            "editorial": {
-                "priority_score": extras.get("priority_score"),
-                "priority_rating": extras.get("priority_rating"),
-                "priority_level": extras.get("priority_level"),
-                "editorial_zone": extras.get(
-                    "editorial_zone_label"
-                ),
-                "matched_place": extras.get("matched_place"),
-                "priority_reasons": extras.get(
-                    "priority_reasons", []
-                ),
+            "geography": {
+                "matches": extras.get("geographic_matches", []),
+                "location": getattr(story, "location", ""),
             },
         }
 
@@ -2461,28 +2350,23 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         ).pack(side="left")
 
     # ------------------------------------------------------------------
-    # Statistics and priority helpers
+    # Statistics
     # ------------------------------------------------------------------
 
     def _update_statistics(self):
-        counts = {
-            "Immediate": 0,
-            "Urgent": 0,
-            "Routine": 0,
-            "Editor review": 0,
-        }
-
+        now = datetime.now(timezone.utc)
+        ages = []
         for story in self.stories:
-            counts[self._priority_label(story)] += 1
-
-        self.stat_labels["immediate"].configure(
-            text=str(counts["Immediate"])
+            parsed = published_datetime(getattr(story, "published", ""))
+            ages.append((now - parsed).days if parsed is not None else None)
+        self.stat_labels["today"].configure(
+            text=str(sum(age == 0 for age in ages))
         )
-        self.stat_labels["urgent"].configure(
-            text=str(counts["Urgent"])
+        self.stat_labels["recent"].configure(
+            text=str(sum(age is not None and 1 <= age <= 3 for age in ages))
         )
-        self.stat_labels["routine"].configure(
-            text=str(counts["Routine"])
+        self.stat_labels["older"].configure(
+            text=str(sum(age is None or age > 3 for age in ages))
         )
         self.stat_labels["review"].configure(
             text="1" if self.selected_story is not None else "0"
@@ -2490,89 +2374,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         self.stat_labels["total"].configure(
             text=str(len(self.stories))
         )
-
-    def _score_collected_stories(self, stories=None):
-        for story in self.stories if stories is None else stories:
-            extras = getattr(story, "extras", {}) or {}
-            location = (
-                extras.get("location")
-                or extras.get("area")
-                or getattr(story, "location", "")
-                or ""
-            )
-            organisation = (
-                extras.get("source_organisation")
-                or extras.get("organisation")
-                or ""
-            )
-            extra_signals = list(getattr(story, "tags", ()) or ())
-            if organisation:
-                extra_signals.append(str(organisation))
-            try:
-                result = score_story(
-                    module="sport",
-                    title=str(story.title or ""),
-                    summary=str(story.summary or ""),
-                    body=str(story.body or ""),
-                    location=str(location or ""),
-                    source=str(getattr(story, "source", "") or ""),
-                    extra_signals=extra_signals,
-                )
-                extras.update(result.to_dict())
-                story.extras = extras
-                story.priority = result.level
-            except Exception as error:
-                extras["priority_score"] = 0
-                extras["priority_level"] = "Low Priority"
-                extras["priority_error"] = str(error)
-                story.extras = extras
-
-    def _story_score(self, story):
-        extras = getattr(story, "extras", {}) or {}
-        try:
-            return int(extras.get("priority_score", 0) or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    def _priority_label(self, story):
-        extras = getattr(story, "extras", {}) or {}
-        level = str(
-            extras.get("priority_level")
-            or getattr(story, "priority", "")
-            or ""
-        ).casefold()
-        rating = extras.get("priority_rating", 0)
-        try:
-            rating = int(rating or 0)
-        except (TypeError, ValueError):
-            rating = 0
-
-        if "front page" in level or rating >= 5:
-            return "Immediate"
-        if "high priority" in level or rating == 4:
-            return "Urgent"
-        if "newsworthy" in level or rating == 3:
-            return "Routine"
-        return "Editor review"
-
-    @staticmethod
-    def _priority_rank(priority):
-        return {
-            "Immediate": 4,
-            "Urgent": 3,
-            "Editor review": 2,
-            "Routine": 1,
-        }.get(priority, 0)
-
-    @staticmethod
-    def _priority_colour(priority):
-        return {
-            "Immediate": IMMEDIATE,
-            "Urgent": URGENT,
-            "Editor review": ACCENT,
-            "Routine": ROUTINE,
-        }.get(priority, TEXT_MUTED)
-
 
 
 def open_sport(master=None):

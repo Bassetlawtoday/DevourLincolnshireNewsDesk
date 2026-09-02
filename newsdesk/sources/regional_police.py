@@ -361,9 +361,13 @@ def collect_regional_police_sources() -> tuple[list[Story], list[str]]:
 
     stories: list[Story] = []
     errors: list[str] = []
-    for scraper, requires_filter in _regional_scrapers():
+    from concurrent.futures import ThreadPoolExecutor
+
+    def collect_one(item):
+        scraper, requires_filter = item
         try:
             collected = scraper.fetch_latest_news()
+            retained = []
             for story in collected:
                 if requires_filter:
                     match = story_matches_lincolnshire(story)
@@ -374,11 +378,17 @@ def collect_regional_police_sources() -> tuple[list[Story], list[str]]:
                 story.category = story.category or "Police"
                 story.extras.setdefault("module_profile", "police")
                 story.extras.setdefault("official_regional_source", True)
-                stories.append(story)
+                retained.append(story)
+            return retained, []
         except Exception as error:
-            errors.append(f"{scraper.source_name}: {error}")
+            return [], [f"{scraper.source_name}: {error}"]
         finally:
             scraper.close()
+    sources = list(_regional_scrapers())
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(sources))), thread_name_prefix="police-source") as executor:
+        for collected, source_errors in executor.map(collect_one, sources):
+            stories.extend(collected)
+            errors.extend(source_errors)
     return stories, errors
 
 

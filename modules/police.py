@@ -1,6 +1,7 @@
 from pathlib import Path
 import ctypes
 from ctypes import wintypes
+from datetime import datetime, timezone
 from io import BytesIO
 import hashlib
 import json
@@ -9,6 +10,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import webbrowser
 import zipfile
 from tkinter import filedialog, messagebox
@@ -42,7 +44,7 @@ from newsdesk.ui_support import (
     focus_existing_window,
     maximize_window,
 )
-from editorial.priority_engine import score_story
+from newsdesk.feed_policy import prepare_lincolnshire_feed, published_datetime
 
 _LINCOLNSHIRE_POLICE_LOCALITIES = (
     "Lincolnshire", "Lincoln", "Boston", "Grantham", "Spalding",
@@ -89,6 +91,8 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self.selected_result = None
         self.source_manager_window = None
         self.is_refreshing = False
+        self._collection_started_at = None
+        self._collection_progress_info = {}
         self.search_var = ctk.StringVar(value="")
         self._search_debounce = DebouncedAction(
             self._window_support,
@@ -115,7 +119,7 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self.header = NewsDeskHeader(
             self,
             module_title="Police Intelligence",
-            subtitle="Collect  •  Classify  •  Review  •  Publish",
+            subtitle="Collect  •  Lincolnshire  •  Review  •  Publish",
             primary_button_text="REFRESH POLICE NEWS",
             primary_command=self._refresh_police_news,
             close_command=self._window_support.close,
@@ -165,10 +169,10 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self.stat_labels = {}
 
         statistics = (
-            ("immediate", "IMMEDIATE", "0", IMMEDIATE),
-            ("urgent", "URGENT", "0", URGENT),
-            ("routine", "ROUTINE", "0", ROUTINE),
-            ("review", "EDITOR REVIEW", "0", ACCENT),
+            ("today", "TODAY", "0", SUCCESS),
+            ("recent", "PREVIOUS 3 DAYS", "0", TEXT_PRIMARY),
+            ("older", "OLDER", "0", TEXT_MUTED),
+            ("review", "SELECTED STORY", "0", ACCENT),
             ("total", "TOTAL STORIES", "0", SUCCESS),
         )
 
@@ -273,7 +277,7 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         # Police window components are migrated.
         self.filter_menu = self.story_queue.filter_menu
         self.queue_count_label = self.story_queue.queue_count_label
-        self._style_police_option_menu(self.filter_menu)
+        self.filter_menu.grid_remove()
 
     def _build_filter_controls(self, parent):
         """Build compact in-memory Police queue controls."""
@@ -327,7 +331,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self.sort_menu = self._filter_option_menu(
             controls,
             (
-                "Editorial priority",
                 "Newest first",
                 "Oldest first",
                 "Title A–Z",
@@ -573,6 +576,13 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             return
 
         self.is_refreshing = True
+        self._collection_started_at = time.monotonic()
+        self._collection_progress_info = {
+            "index": 0,
+            "total": 5,
+            "source": "Starting collection",
+            "story_count": 0,
+        }
         self.refresh_button.configure(
             state="disabled",
             text="COLLECTING...",
@@ -588,10 +598,37 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             daemon=True,
         )
         worker.start()
+        self._window_support.call_later(250, self._poll_collection_progress)
+
+    def _receive_collection_progress(self, info):
+        """Receive thread-safe collection state for the UI poller."""
+
+        self._collection_progress_info = dict(info or {})
+
+    def _poll_collection_progress(self):
+        if not self.is_refreshing:
+            return
+
+        info = self._collection_progress_info
+        elapsed = int(time.monotonic() - self._collection_started_at)
+        index = int(info.get("index", 0) or 0)
+        total = int(info.get("total", 5) or 5)
+        source = str(info.get("source") or "Collecting police news")
+        story_count = int(info.get("story_count", 0) or 0)
+        found = f" • {story_count} stories found" if story_count else ""
+        self.status_label.configure(
+            text=(
+                f"Status: Stage {index} of {total} — {source}{found} "
+                f"— {elapsed}s elapsed"
+            )
+        )
+        self._window_support.call_later(500, self._poll_collection_progress)
 
     def _collect_police_news(self):
         try:
-            service = PoliceCollectionService()
+            service = PoliceCollectionService(
+                progress_callback=self._receive_collection_progress,
+            )
             collection = service.collect()
 
             stories = collection.stories
@@ -608,13 +645,14 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
                 ),
             )
 
-            self.after(
+            self._window_support.call_later_guarded(
                 0,
                 lambda: self._collection_complete(
                     stories,
                     results,
                     errors,
                 ),
+                on_error=self._collection_failed,
             )
 
         except Exception as error:
@@ -626,9 +664,19 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             )
 
     def _collection_complete(self, stories, results, errors, notify_dashboard=True):
-        self.stories = list(stories)
+        elapsed = (
+            int(time.monotonic() - self._collection_started_at)
+            if self._collection_started_at is not None
+            else 0
+        )
+        self._collection_started_at = None
+        self.stories = prepare_lincolnshire_feed(stories)
         self.publish_results = dict(results)
-        self._score_collected_stories()
+        retained_ids = {id(story) for story in self.stories}
+        self.publish_results = {
+            story_id: result for story_id, result in self.publish_results.items()
+            if story_id in retained_ids
+        }
         self._refresh_filter_options()
         self.selected_story = None
         self.selected_result = None
@@ -645,19 +693,19 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self._refresh_visible_queue()
         self._show_review_placeholder()
 
-        processed = len(results)
-        total = len(stories)
+        processed = len(self.publish_results)
+        total = len(self.stories)
 
         if errors:
             self.status_label.configure(
                 text=(
                     f"Status: Loaded {total} police stories; "
-                    f"{processed} processed successfully."
+                    f"{processed} processed successfully in {elapsed}s."
                 )
             )
         else:
             self.status_label.configure(
-                text=f"Status: Loaded {total} police stories."
+                text=f"Status: Loaded {total} police stories in {elapsed}s."
             )
 
         if notify_dashboard:
@@ -678,6 +726,7 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
 
     def _collection_failed(self, error_message):
         self.is_refreshing = False
+        self._collection_started_at = None
         self.refresh_button.configure(
             state="normal",
             text="REFRESH POLICE NEWS",
@@ -704,7 +753,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self._search_debounce.cancel()
         if not hasattr(self, "story_queue"):
             return
-        priority = selected_filter or self.filter_menu.get() or "All stories"
         search = self.search_var.get().strip().casefold()
         locality = self.locality_menu.get() or "All localities"
         source = self.source_menu.get() or "All sources"
@@ -719,12 +767,11 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
                 locality=locality,
                 source=source,
                 category=category,
-                priority=priority,
             )
         ]
         visible_stories = self._sort_visible_stories(
             visible_stories,
-            self.sort_menu.get() or "Editorial priority",
+            self.sort_menu.get() or "Newest first",
         )
 
         self._populate_story_queue(visible_stories)
@@ -743,7 +790,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         locality,
         source,
         category,
-        priority,
     ):
         if search and search not in self._story_searchable_text(story):
             return False
@@ -754,8 +800,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         if category != "All categories":
             if category.casefold() not in {value.casefold() for value in self._story_categories(story)}:
                 return False
-        if priority != "All stories" and self._priority_label(story).casefold() != priority.casefold():
-            return False
         return True
 
     def _story_searchable_text(self, story):
@@ -770,7 +814,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             extras.get("crime_type", ""),
             extras.get("primary_category", ""),
             " ".join(story.tags or []),
-            self._priority_label(story),
         )
         return " ".join(str(value or "") for value in values).casefold()
 
@@ -822,11 +865,7 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             indexed.sort(key=lambda item: str(item[1].title or "").casefold(), reverse=True)
         else:
             indexed.sort(
-                key=lambda item: (
-                    self._story_score(item[1]),
-                    self._priority_rank(self._priority_label(item[1])),
-                    self._published_sort_value(item[1]),
-                ),
+                key=lambda item: self._published_sort_value(item[1]),
                 reverse=True,
             )
         return [story for _index, story in indexed]
@@ -868,7 +907,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self.locality_menu.set("All localities")
         self.source_menu.set("All sources")
         self.category_menu.set("All categories")
-        self.filter_menu.set("All stories")
         self.sort_menu.set(self.DEFAULT_SORT)
         self._refresh_visible_queue()
 
@@ -918,25 +956,15 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             or ""
         ).strip()
         published = format_uk_date(getattr(story, "published", ""))
-        score = self._story_score(story)
-
         queue_source = location or source
-        queue_published = " • ".join(
-            value
-            for value in (
-                published,
-                f"Score {score}",
-            )
-            if value
-        )
 
         return {
             "id": id(story),
             "title": story.title or "Untitled police story",
             "summary": story.summary or "",
-            "priority": self._priority_label(story),
+            "priority": "",
             "source": queue_source,
-            "published": queue_published,
+            "published": published,
             "story": story,
         }
 
@@ -959,9 +987,8 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         self.selected_result = self.publish_results.get(id(story))
 
         self._clear_review_content()
-        self.selection_status_label.configure(
-            text=self._priority_label(story).upper()
-        )
+        self.selection_status_label.configure(text="LINCOLNSHIRE")
+        self.stat_labels["review"].configure(text="1")
 
         self._workspace_label(
             story.title or "Untitled police story",
@@ -974,7 +1001,6 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
             for value in (
                 str(story.source or "").strip(),
                 format_uk_date(story.published),
-                self._priority_label(story),
             )
             if value
         )
@@ -1011,35 +1037,17 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         decision = str(story.editorial_decision or "").strip()
         tags = ", ".join(story.tags or [])
         extras = getattr(story, "extras", {}) or {}
-        score = extras.get("priority_score", 0)
-        rating = extras.get("priority_rating", 0)
-        priority_level = extras.get("priority_level", "")
-        zone = extras.get("editorial_zone_label", "")
-        matched_place = extras.get("matched_place", "")
-        reasons = extras.get("priority_reasons", []) or []
-
         editorial_parts = []
-        editorial_parts.append(f"Editorial score: {score}")
-        if rating:
-            editorial_parts.append(f"Rating: {'★' * int(rating)}{'☆' * (5 - int(rating))}")
-        if priority_level:
-            editorial_parts.append(f"Priority level: {priority_level}")
-        if zone:
-            editorial_parts.append(f"Editorial zone: {zone}")
-        if matched_place:
-            editorial_parts.append(f"Matched place: {matched_place}")
         if classification:
             editorial_parts.append(f"Classification: {classification}")
         if decision:
             editorial_parts.append(f"Editorial decision: {decision}")
         if tags:
             editorial_parts.append(f"Tags: {tags}")
-        if reasons:
-            editorial_parts.append("Scoring reasons:\n• " + "\n• ".join(str(item) for item in reasons))
 
         if editorial_parts:
             self._workspace_section(
-                "EDITORIAL INFORMATION",
+                "STORY INFORMATION",
                 "\n\n".join(editorial_parts),
             )
 
@@ -1802,17 +1810,9 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
                 ),
                 "quality": quality,
             },
-            "editorial": {
-                "priority_score": extras.get("priority_score"),
-                "priority_rating": extras.get("priority_rating"),
-                "priority_level": extras.get("priority_level"),
-                "editorial_zone": extras.get(
-                    "editorial_zone_label"
-                ),
-                "matched_place": extras.get("matched_place"),
-                "priority_reasons": extras.get(
-                    "priority_reasons", []
-                ),
+            "geography": {
+                "matches": extras.get("geographic_matches", []),
+                "location": getattr(story, "location", ""),
             },
         }
 
@@ -2255,111 +2255,28 @@ class PoliceIntelligenceWindow(ctk.CTkToplevel):
         ).pack(side="left")
 
     # ------------------------------------------------------------------
-    # Statistics and priority helpers
+    # Statistics
     # ------------------------------------------------------------------
 
     def _update_statistics(self):
-        counts = self._priority_counts(self.stories)
-
-        self.stat_labels["immediate"].configure(
-            text=str(counts["Immediate"])
+        now = datetime.now(timezone.utc)
+        ages = []
+        for story in self.stories:
+            parsed = published_datetime(getattr(story, "published", ""))
+            ages.append((now - parsed).days if parsed is not None else None)
+        self.stat_labels["today"].configure(text=str(sum(age == 0 for age in ages)))
+        self.stat_labels["recent"].configure(
+            text=str(sum(age is not None and 1 <= age <= 3 for age in ages))
         )
-        self.stat_labels["urgent"].configure(
-            text=str(counts["Urgent"])
-        )
-        self.stat_labels["routine"].configure(
-            text=str(counts["Routine"])
+        self.stat_labels["older"].configure(
+            text=str(sum(age is None or age > 3 for age in ages))
         )
         self.stat_labels["review"].configure(
-            text=str(counts["Editor review"])
+            text="1" if self.selected_story is not None else "0"
         )
         self.stat_labels["total"].configure(
             text=str(len(self.stories))
         )
-
-    def _priority_counts(self, stories):
-        counts = {
-            "Immediate": 0,
-            "Urgent": 0,
-            "Routine": 0,
-            "Editor review": 0,
-        }
-        for story in stories:
-            counts[self._priority_label(story)] += 1
-        return counts
-
-    def _score_collected_stories(self):
-        for story in self.stories:
-            extras = getattr(story, "extras", {}) or {}
-            location = (
-                extras.get("location")
-                or extras.get("area")
-                or getattr(story, "location", "")
-                or ""
-            )
-            try:
-                result = score_story(
-                    module="police",
-                    title=str(story.title or ""),
-                    summary=str(story.summary or ""),
-                    body=str(story.body or ""),
-                    location=str(location or ""),
-                )
-                extras.update(result.to_dict())
-                story.extras = extras
-                story.priority = result.level
-            except Exception as error:
-                extras["priority_score"] = 0
-                extras["priority_level"] = "Low Priority"
-                extras["priority_error"] = str(error)
-                story.extras = extras
-
-    def _story_score(self, story):
-        extras = getattr(story, "extras", {}) or {}
-        try:
-            return int(extras.get("priority_score", 0) or 0)
-        except (TypeError, ValueError):
-            return 0
-
-    def _priority_label(self, story):
-        extras = getattr(story, "extras", {}) or {}
-        level = str(
-            extras.get("priority_level")
-            or getattr(story, "priority", "")
-            or ""
-        ).casefold()
-        rating = extras.get("priority_rating", 0)
-        try:
-            rating = int(rating or 0)
-        except (TypeError, ValueError):
-            rating = 0
-
-        if "front page" in level or rating >= 5:
-            return "Immediate"
-        if "high priority" in level or rating == 4:
-            return "Urgent"
-        if "newsworthy" in level or rating == 3:
-            return "Routine"
-        return "Editor review"
-
-    @staticmethod
-    def _priority_rank(priority):
-        return {
-            "Immediate": 4,
-            "Urgent": 3,
-            "Editor review": 2,
-            "Routine": 1,
-        }.get(priority, 0)
-
-    @staticmethod
-    def _priority_colour(priority):
-        return {
-            "Immediate": IMMEDIATE,
-            "Urgent": URGENT,
-            "Editor review": ACCENT,
-            "Routine": ROUTINE,
-        }.get(priority, TEXT_MUTED)
-
 
 
 def open_police(master=None):

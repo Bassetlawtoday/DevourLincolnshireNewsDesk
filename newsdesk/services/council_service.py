@@ -17,18 +17,7 @@ from newsdesk.sources.council_scraper import (
 )
 from newsdesk.story import Story
 from newsdesk.sources.managed_websites import collect_managed_websites
-
-
-TOP_PRIORITY = "TOP PRIORITY"
-HIGH_LOCAL_IMPORTANCE = "HIGH LOCAL IMPORTANCE"
-LOCAL = "LOCAL"
-REVIEW = "REVIEW"
-PRIORITY_ORDER = {
-    TOP_PRIORITY: 0,
-    HIGH_LOCAL_IMPORTANCE: 1,
-    LOCAL: 2,
-    REVIEW: 3,
-}
+from newsdesk.feed_policy import prepare_lincolnshire_feed
 
 
 @dataclass(slots=True)
@@ -52,8 +41,8 @@ class CouncilCollectionResult:
         return {key: asdict(value) for key, value in self.source_health.items()}
 
 
-class CouncilPriorityClassifier:
-    """Apply transparent location-led Council priorities and one category."""
+class CouncilStoryEnricher:
+    """Add Council location evidence and a descriptive subject category."""
 
     _CATEGORY_RULES = (
         ("Housing", ("housing", "tenant", "homeless", "landlord", "repairs")),
@@ -73,12 +62,13 @@ class CouncilPriorityClassifier:
 
     def __init__(self, config: dict | None = None):
         self.config = config or load_council_config()
-        self.locations = tuple(self.config.get("bassetlaw_locations", ()))
+        self.locations = tuple(self.config.get("lincolnshire_locations", ()))
+        self.principal_sources = set(self.config.get("principal_source_keys", ()))
         self.ambiguous = {
             value.casefold() for value in self.config.get("ambiguous_locations", ())
         }
         self.high_terms = tuple(self.config.get("high_local_importance_terms", ()))
-        self.outside_terms = tuple(self.config.get("outside_district_terms", ()))
+        self.outside_terms = tuple(self.config.get("outside_area_terms", ()))
         self._patterns = {
             location: self._boundary_pattern(location) for location in self.locations
         }
@@ -87,41 +77,11 @@ class CouncilPriorityClassifier:
         text = " ".join((story.title, story.summary, story.body))
         prominent_text = " ".join((story.title, story.summary))
         locations = self.match_locations(text)
-        source_key = str(story.extras.get("source_key", ""))
-        if source_key == "bassetlaw_district_council":
-            priority = TOP_PRIORITY
-            reason = "Official Bassetlaw District Council news"
-        elif locations:
-            priority = TOP_PRIORITY
-            reason = (
-                "Direct Bassetlaw mention"
-                if locations[0].casefold() == "bassetlaw"
-                else f"{locations[0]} location match"
-            )
-        elif self._contains_any(prominent_text, self.high_terms):
-            priority = HIGH_LOCAL_IMPORTANCE
-            reason = self._high_importance_reason(prominent_text)
-        elif source_key == "nottinghamshire_county_council":
-            priority = LOCAL
-            reason = "Nottinghamshire-wide information relevant to local readers"
-        elif self._contains_any(prominent_text, self.outside_terms):
-            priority = REVIEW
-            reason = "Outside-district story retained for review"
-        elif re.search(r"\b(?:East Midlands|regional|across the region)\b", text, re.I):
-            priority = LOCAL
-            reason = "Regional announcement with potential local relevance"
-        else:
-            priority = REVIEW
-            reason = "Regional announcement — local relevance unclear"
-
-        story.priority = priority
         story.category = self.category(prominent_text, story.body)
         story.location = ", ".join(locations)
         story.extras.update(
             {
-                "priority_reason": reason,
                 "matched_locations": locations,
-                "priority_order": PRIORITY_ORDER[priority],
             }
         )
         return story
@@ -150,18 +110,18 @@ class CouncilPriorityClassifier:
     def _high_importance_reason(self, text: str) -> str:
         lowered = text.casefold()
         if "reorganisation" in lowered:
-            return "Local government reorganisation affecting Bassetlaw"
+            return "Local government reorganisation affecting Lincolnshire"
         if any(term in lowered for term in ("bus", "rail", "road", "a614", "a1")):
-            return "Strategic transport change affecting Bassetlaw"
-        if "north nottinghamshire" in lowered or "regional investment" in lowered:
-            return "Major investment relevant to North Nottinghamshire"
-        return "County-wide service affecting Bassetlaw"
+            return "Strategic transport change affecting Lincolnshire"
+        if "greater lincolnshire" in lowered or "regional investment" in lowered:
+            return "Major investment relevant to Greater Lincolnshire"
+        return "County-wide service affecting Lincolnshire"
 
     def _ambiguous_context(self, text: str, start: int, end: int) -> bool:
         context = text[max(0, start - 90): end + 90]
         return bool(
             re.search(
-                r"\b(?:Bassetlaw|Nottinghamshire|village|district|near\s+(?:Retford|Worksop))\b",
+                r"\b(?:Lincolnshire|city|village|district|county|council)\b",
                 context,
                 re.I,
             )
@@ -171,7 +131,7 @@ class CouncilPriorityClassifier:
     def _contains_any(text: str, terms) -> bool:
         lowered = text.casefold()
         return any(
-            re.search(CouncilPriorityClassifier._word_expression(term), lowered)
+            re.search(CouncilStoryEnricher._word_expression(term), lowered)
             for term in terms
         )
 
@@ -198,7 +158,7 @@ class CouncilCollectionService:
         self.config = load_council_config(config_path)
         self.scraper_factory = scraper_factory or CouncilSourceScraper
         self.image_service_factory = image_service_factory or ImageService
-        self.classifier = CouncilPriorityClassifier(self.config)
+        self.classifier = CouncilStoryEnricher(self.config)
 
     def collect(self, *, now: datetime | None = None) -> CouncilCollectionResult:
         result = CouncilCollectionResult()
@@ -234,7 +194,7 @@ class CouncilCollectionService:
             self.classifier.classify(story)
             source_health = result.source_health.get(story.extras.get("source_key"))
             if source_health and story.extras.get("matched_locations"):
-                source_health.direct_bassetlaw_matches += 1
+                source_health.direct_lincolnshire_matches += 1
 
         image_service = self.image_service_factory()
         image_failure_counts: dict[str, int] = {}
@@ -259,14 +219,7 @@ class CouncilCollectionService:
             source_name = result.source_health[source_key].source_name
             result.errors.append(f"{source_name}: {count} image failures")
 
-        result.stories = sorted(
-            deduplicated,
-            key=lambda story: (
-                PRIORITY_ORDER.get(story.priority, 99),
-                -self._published_timestamp(story.published),
-                story.title.casefold(),
-            ),
-        )
+        result.stories = prepare_lincolnshire_feed(deduplicated)
         return result
 
     @staticmethod
@@ -291,11 +244,15 @@ class CouncilCollectionService:
                 by_title[title_key] = story
                 retained.append(story)
                 continue
-            if story.extras.get("source_key") == "bassetlaw_district_council":
+            if CouncilCollectionService._story_richness(story) > CouncilCollectionService._story_richness(existing):
                 retained[retained.index(existing)] = story
                 by_title[title_key] = story
             result.duplicate_headlines_removed += 1
         return retained
+
+    @staticmethod
+    def _story_richness(story: Story) -> tuple[int, int]:
+        return (1 if story.image_url else 0, len(story.body or ""))
 
     @staticmethod
     def _published_timestamp(value: str) -> float:
@@ -309,6 +266,5 @@ class CouncilCollectionService:
 
 
 __all__ = [
-    "CouncilCollectionResult", "CouncilCollectionService", "CouncilPriorityClassifier",
-    "HIGH_LOCAL_IMPORTANCE", "LOCAL", "PRIORITY_ORDER", "REVIEW", "TOP_PRIORITY",
+    "CouncilCollectionResult", "CouncilCollectionService", "CouncilStoryEnricher",
 ]

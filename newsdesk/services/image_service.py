@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hashlib
 import logging
 import mimetypes
 from pathlib import Path
@@ -132,7 +133,7 @@ class ImageService:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.placeholder_path = (
-            self.cache_dir / "newsdesk-image-placeholder.png"
+            self.cache_dir / "devour-lincolnshire-image-placeholder.png"
         )
 
     # ------------------------------------------------------------------
@@ -207,9 +208,10 @@ class ImageService:
         """
 
         try:
-            self._ensure_placeholder(title)
+            placeholder_path = self._placeholder_path(title)
+            self._ensure_placeholder(title, placeholder_path)
             asset = self._asset_from_file(
-                self.placeholder_path,
+                placeholder_path,
                 source_url=source_url,
                 cached=True,
                 is_fallback=True,
@@ -256,7 +258,7 @@ class ImageService:
                 continue
 
             if (
-                path == self.placeholder_path
+                self._is_placeholder_path(path)
                 and not include_placeholder
             ):
                 continue
@@ -294,7 +296,7 @@ class ImageService:
                 continue
 
             if (
-                path == self.placeholder_path
+                self._is_placeholder_path(path)
                 and not include_placeholder
             ):
                 continue
@@ -621,8 +623,21 @@ class ImageService:
     # Placeholder
     # ------------------------------------------------------------------
 
-    def _ensure_placeholder(self, title: str) -> None:
-        if self.placeholder_path.is_file():
+    def _placeholder_path(self, title: str) -> Path:
+        subtitle = str(title or "").strip() or "NewsDesk image unavailable"
+        digest = hashlib.sha256(subtitle.casefold().encode("utf-8")).hexdigest()[:12]
+        return self.cache_dir / f"devour-lincolnshire-placeholder-{digest}.png"
+
+    @staticmethod
+    def _is_placeholder_path(path: Path) -> bool:
+        name = path.name.casefold()
+        return name == "devour-lincolnshire-image-placeholder.png" or (
+            name.startswith("devour-lincolnshire-placeholder-")
+            and name.endswith(".png")
+        )
+
+    def _ensure_placeholder(self, title: str, placeholder_path: Path) -> None:
+        if placeholder_path.is_file():
             return
 
         width = 1200
@@ -649,7 +664,7 @@ class ImageService:
         font_large = self._load_font(58)
         font_small = self._load_font(30)
 
-        heading = "BASSETLAW TODAY"
+        heading = "DEVOUR LINCOLNSHIRE"
         subtitle = (
             str(title or "").strip()
             or "NewsDesk image unavailable"
@@ -685,7 +700,7 @@ class ImageService:
         )
 
         image.save(
-            self.placeholder_path,
+            placeholder_path,
             format="PNG",
             optimize=True,
         )

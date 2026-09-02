@@ -14,6 +14,17 @@ _BLOCK_TAGS = {
     "table", "tr", "ul",
 }
 
+_BARE_WEB_URL = re.compile(
+    r"(?<![\w@/:])www\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s<]*)?",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalise_embedded_urls(text: str) -> str:
+    """Make bare web addresses usable by Metricool and social networks."""
+
+    return _BARE_WEB_URL.sub(lambda match: f"https://{match.group(0)}", text)
+
 
 class _SocialTextParser(HTMLParser):
     def __init__(self) -> None:
@@ -48,14 +59,45 @@ def clean_social_text(value: object, *, source_url: str = "") -> str:
     text = re.split(r"(?im)^\s*\[?\s*notes?\s+to\s+editors?\s*:", text, maxsplit=1)[0]
     if source_url:
         text = text.replace(str(source_url).strip(), "")
-    # Keep genuine links embedded in the editorial copy (surveys, reporting
-    # forms, consultations and supporting information). Only the story's own
-    # source URL is removed above because Social Desk stores and appends that
-    # address separately.
+    # Preserve useful embedded links (surveys, sign-up forms and supporting
+    # pages).  Only the separately stored source URL is removed above.
+    text = _normalise_embedded_urls(text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip(" \n-")
+
+
+def repair_ldrs_draft(draft):
+    """Upgrade an existing LDRS draft created by the older attachment parser."""
+
+    internal = str(getattr(draft, "internal_source_url", "") or "").strip()
+    public = str(getattr(draft, "source_url", "") or "").strip()
+    if public.casefold().startswith("https://ldrs.org.uk/article/"):
+        draft.internal_source_url = public
+        draft.source_url = ""
+    elif internal:
+        draft.source_url = ""
+    draft.include_source_url = False
+
+    lines = [line.strip() for line in str(getattr(draft, "text", "") or "").splitlines() if line.strip()]
+    if len(lines) >= 2 and lines[0].casefold() == lines[1].casefold():
+        attachment_caption = lines[0]
+        draft.text = "\n\n".join(lines[2:]).strip()
+        if attachment_caption:
+            draft.image_caption = attachment_caption
+        credit = re.search(
+            r"\b(?:Credit:|Photo(?:graph)?(?:\s+credit)?:?)\s*(.+)$",
+            attachment_caption,
+            flags=re.IGNORECASE,
+        )
+        if credit:
+            draft.image_credit = credit.group(1).strip()
+    draft.text = clean_social_text(
+        draft.text,
+        source_url=str(getattr(draft, "internal_source_url", "") or ""),
+    )
+    return draft
 
 
 def compose_metricool_text(
@@ -77,4 +119,4 @@ def compose_metricool_text(
     return "\n\n".join(part for part in parts if part)
 
 
-__all__ = ["clean_social_text", "compose_metricool_text"]
+__all__ = ["clean_social_text", "compose_metricool_text", "repair_ldrs_draft"]

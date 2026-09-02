@@ -4,33 +4,27 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-COUNTIES = ("Nottinghamshire", "Derbyshire", "Lincolnshire", "Leicestershire")
+COUNTIES = ("Lincolnshire",)
 
 AREA_TOKENS = {
-    "Nottinghamshire": (
-        "nottinghamshire", "nottingham", "bassetlaw", "ashfield", "gedling",
-        "broxtowe", "rushcliffe", "southwell", "sherwood forest", "worksop",
-        "mansfield", "newark",
-    ),
-    "Derbyshire": (
-        "derbyshire", "derby", "buxton", "chesterfield", "peak district",
-        "bakewell", "matlock bath", "crich", "amber valley", "high peak",
-        "derbyshire dales", "erewash", "north east derbyshire", "bolsover",
-    ),
     "Lincolnshire": (
         "lincolnshire", "lincoln", "grantham", "east lindsey", "boston",
         "market rasen", "south kesteven", "north kesteven", "west lindsey",
-        "south holland", "skegness", "spalding",
-    ),
-    "Leicestershire": (
-        "leicestershire", "leicester", "charnwood", "harborough", "hinckley",
-        "melton", "north west leicestershire", "blaby", "oadby", "loughborough",
+        "south holland", "skegness", "spalding", "north lincolnshire",
+        "north east lincolnshire", "scunthorpe", "grimsby", "cleethorpes",
+        "barton-upon-humber", "barton upon humber", "brigg", "epworth",
+        "immingham", "louth", "sleaford", "bourne", "stamford", "gainsborough",
+        "horncastle", "mablethorpe", "alford", "spilsby", "woodhall spa",
+        "tattershall", "wragby", "caistor", "crowland", "holbeach",
+        "long sutton", "market deeping", "kirton in lindsey", "the wash",
     ),
 }
 
 
 def counties_for_area(area: str | None) -> tuple[str, ...]:
     value = (area or "").casefold()
+    if "fringe" in value:
+        return ()
     return tuple(
         county for county, tokens in AREA_TOKENS.items()
         if any(token in value for token in tokens)
@@ -39,6 +33,28 @@ def counties_for_area(area: str | None) -> tuple[str, ...]:
 
 def source_is_in_enabled_geography(source) -> bool:
     return bool(counties_for_area(getattr(source, "area", None)))
+
+
+def event_is_in_enabled_geography(event, source_area: str | None = None) -> bool:
+    """Return True only for Greater Lincolnshire event records.
+
+    A trusted Lincolnshire-wide source area is sufficient. Mixed regional feeds
+    must provide Lincolnshire evidence in the event's own location fields.
+    """
+    area = (source_area or "").strip()
+    if area and "fringe" not in area.casefold() and counties_for_area(area):
+        return True
+    evidence = " ".join(
+        str(getattr(event, field, "") or "")
+        for field in ("county", "town", "venue", "address", "postcode")
+    )
+    return bool(counties_for_area(evidence))
+
+
+def event_is_allowed(event) -> bool:
+    """Apply product-wide EventsDesk exclusions after enrichment."""
+    category = str(getattr(event, "category", "") or "").strip().casefold()
+    return category not in {"film", "cinema", "movie", "event cinema"}
 
 
 def preference_path(data_dir: str | Path) -> Path:

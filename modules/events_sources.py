@@ -14,7 +14,7 @@ from newsdesk.theme import (
 
 
 class EventSourceManager(ctk.CTkToplevel):
-    """EventsDesk-only feed switches for the four-county editorial footprint."""
+    """EventsDesk-only feed switches for the Greater Lincolnshire footprint."""
 
     def __init__(self, master, data_dir, on_saved=None):
         super().__init__(master)
@@ -41,7 +41,7 @@ class EventSourceManager(ctk.CTkToplevel):
         ).pack(anchor="w", padx=24, pady=(18, 2))
         ctk.CTkLabel(
             top,
-            text="Only Nottinghamshire, Derbyshire, Lincolnshire and Leicestershire feeds are available here. Untick any feed you do not want refreshed.",
+            text="Greater Lincolnshire feeds are available here, including North and North East Lincolnshire. Cinema-only sources and film-classified events are excluded. Untick any feed you do not want refreshed.",
             text_color=TEXT_SECONDARY, wraplength=820, justify="left"
         ).pack(anchor="w", padx=24, pady=(0, 16))
 

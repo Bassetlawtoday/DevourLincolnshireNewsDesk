@@ -21,6 +21,7 @@ import requests
 from newsdesk.publish_result import PublishResult
 from newsdesk.services.image_service import ImageService
 from newsdesk.sources.article_scraper import ArticleScraper
+from newsdesk.sports.media_policy import choose_article_still, is_still_image_url
 from newsdesk.story import Story
 from newsdesk.story_engine import StoryEngine
 
@@ -110,7 +111,13 @@ class SportArticleService:
             story.extras.get("article_content_status", "") or ""
         ).strip()
 
-        if status in {"loading", "complete"}:
+        if status == "loading":
+            return False
+
+        if not is_still_image_url(story.image_url) or story.image_is_fallback:
+            return True
+
+        if status == "complete":
             return False
 
         body = self._normalise_text(story.body)
@@ -185,7 +192,7 @@ class SportArticleService:
             api_article, api_error = self._extract_configured_api_article(story)
 
         article = html_article if html_body else api_article
-        body = str(article.get("text", "") or "").strip()
+        body = self._normalise_article_layout(article.get("text", ""))
         author = self._normalise_text(article.get("author", ""))
         published = str(article.get("published", "") or "").strip()
         canonical = str(article.get("canonical", "") or "").strip()
@@ -547,6 +554,25 @@ class SportArticleService:
             if generated:
                 story.summary = generated
 
+    @classmethod
+    def _normalise_article_layout(cls, value: Any) -> str:
+        """Preserve useful paragraphs and make single-block articles readable."""
+
+        raw = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        paragraphs = [cls._normalise_text(part) for part in re.split(r"\n\s*\n", raw)]
+        paragraphs = [part for part in paragraphs if part]
+        if len(paragraphs) > 1:
+            return "\n\n".join(paragraphs)
+        text = paragraphs[0] if paragraphs else cls._normalise_text(raw)
+        if len(text) < 500:
+            return text
+
+        sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9‘“])", text)
+        if len(sentences) < 3:
+            return text
+        grouped = [" ".join(sentences[index:index + 2]).strip() for index in range(0, len(sentences), 2)]
+        return "\n\n".join(part for part in grouped if part)
+
     def _apply_article_image(
         self,
         story: Story,
@@ -557,7 +583,10 @@ class SportArticleService:
         listing_image = str(story.image_url or "").strip()
         listing_local_path = str(story.image_local_path or "").strip()
         api_image = str(api_article.get("image", "") or "").strip()
-        html_image = str(html_article.get("image", "") or "").strip()
+        html_image = choose_article_still(
+            html_article,
+            str(story.url or "").strip(),
+        )
 
         caption = self._normalise_text(api_article.get("image_caption", ""))
         credit = self._normalise_text(api_article.get("image_credit", ""))

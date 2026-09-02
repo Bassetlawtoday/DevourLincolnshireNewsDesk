@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import logging
 import re
@@ -29,6 +30,7 @@ from newsdesk.sources.regional_police import collect_regional_police_sources
 
 PoliceScraperFactory = Callable[[], Any]
 ImageServiceFactory = Callable[[], Any]
+ProgressCallback = Callable[[dict[str, Any]], None]
 LOGGER = logging.getLogger(__name__)
 
 
@@ -98,6 +100,7 @@ class PoliceCollectionService:
         self,
         scraper_factory: PoliceScraperFactory | None = None,
         image_service_factory: ImageServiceFactory | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self.scraper_factory = (
             scraper_factory
@@ -107,6 +110,17 @@ class PoliceCollectionService:
             image_service_factory
             or self._default_image_service_factory
         )
+        self.progress_callback = progress_callback
+
+    def _progress(self, stage: str, index: int, source: str, story_count: int = 0) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback({
+                "stage": stage,
+                "index": index,
+                "total": 5,
+                "source": source,
+                "story_count": story_count,
+            })
 
     def collect(self) -> PoliceCollectionResult:
         """Collect stories, attach images and process editorial outputs."""
@@ -118,12 +132,15 @@ class PoliceCollectionService:
             scraper = self.scraper_factory()
             image_service = self.image_service_factory()
 
+            self._progress("collecting", 1, "Lincolnshire Police")
             collected_stories = list(
                 scraper.fetch_latest_news()
             )
+            self._progress("collecting", 2, "Regional police sources", len(collected_stories))
             regional_stories, regional_errors = collect_regional_police_sources()
             collected_stories.extend(regional_stories)
             result.errors.extend(regional_errors)
+            self._progress("collecting", 3, "Managed Lincolnshire sources", len(collected_stories))
             managed_stories, managed_errors = collect_managed_websites("police")
             collected_stories.extend(managed_stories)
             result.errors.extend(managed_errors)
@@ -137,12 +154,19 @@ class PoliceCollectionService:
 
             for story in stories:
                 self._ensure_story_summary(story)
-                self._attach_story_image(
-                    story,
-                    image_service,
-                    result,
-                )
 
+            self._progress("images", 4, "Downloading story images", len(stories))
+            with ThreadPoolExecutor(
+                max_workers=min(6, max(1, len(stories))),
+                thread_name_prefix="police-image",
+            ) as image_executor:
+                list(image_executor.map(
+                    lambda story: self._attach_story_image(story, image_service, result),
+                    stories,
+                ))
+
+            self._progress("processing", 5, "Preparing Social Desk content", len(stories))
+            for story in stories:
                 try:
                     publish_result = scraper.engine.process(
                         story

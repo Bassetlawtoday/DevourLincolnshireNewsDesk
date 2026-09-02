@@ -1,595 +1,376 @@
 {
-  "version": 1,
+  "version": 2,
+  "scope": "Greater Lincolnshire",
   "sources": [
     {
-      "name": "Worksop Town",
+      "name": "Lincolnshire FA",
       "sport": "Football",
-      "organisation": "Worksop Town FC",
-      "listing_url": "https://worksoptownfc.com/news",
-      "article_link_selectors": [
-        ".card h2 a[href^='/news/']",
-        ".card a[href^='/news/']"
-      ],
-      "card_selectors": [
-        ".card"
-      ],
-      "date_selectors": [
-        ".card-body .text-muted",
-        ".small.text-muted"
-      ],
-      "include_url_patterns": [
-        "worksoptownfc\\.com/news/.+"
-      ],
-      "exclude_url_patterns": [
-        "/news/?$",
-        "/fixtures?/?$",
-        "/calendar",
-        "/teams?/",
-        "/tickets?",
-        "/hospitality",
-        "/sponsors?",
-        "/sponsorship",
-        "/shop",
-        "/contact",
-        "/club-info"
-      ],
+      "organisation": "Lincolnshire Football Association",
+      "listing_url": "https://www.lincolnshirefa.com/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Worksop",
-        "Bassetlaw",
+        "Lincolnshire",
         "Football"
       ],
-      "max_stories": 25
+      "max_stories": 30
     },
     {
-      "name": "Retford United",
+      "name": "Lincolnshire Football League",
       "sport": "Football",
-      "organisation": "Retford United Football Club",
-      "listing_url": "https://retfordunitedfc.co.uk/news/",
-      "article_link_selectors": [
-        "article.ee-post a[href*='/news/']",
-        "article a[href*='/news/']"
-      ],
-      "card_selectors": [
-        "article.ee-post",
-        "article"
-      ],
-      "title_selectors": [
-        "h2",
-        "h3"
-      ],
-      "include_url_patterns": [
-        "retfordunitedfc\\.co\\.uk/news/.+"
-      ],
-      "exclude_url_patterns": [
-        "/news/?$",
-        "/about",
-        "/contact",
-        "/fixtures?",
-        "/tables?",
-        "/teams?",
-        "/shop",
-        "/membership",
-        "/sponsors?"
-      ],
+      "organisation": "Lincolnshire Football League",
+      "listing_url": "https://fulltime.thefa.com/index.html?league=6657134",
+      "location": "Lincolnshire",
       "tags": [
-        "Retford",
-        "Bassetlaw",
+        "Lincolnshire",
         "Football"
       ],
-      "headers": {
-        "Referer": "https://retfordunitedfc.co.uk/",
-        "Accept-Language": "en-GB,en;q=0.9"
-      },
-      "publication_feed_url": "https://retfordunitedfc.co.uk/feed/",
-      "listing_warmup_url": "https://retfordunitedfc.co.uk/",
-      "max_stories": 20
+      "max_stories": 30
     },
     {
-      "name": "Harworth Colliery",
+      "name": "Grimsby Town",
       "sport": "Football",
-      "organisation": "Harworth Colliery Football Club",
-      "listing_url": "https://www.pitchero.com/clubs/harworthcollieryinstitute/",
-      "article_link_selectors": [
-        "a[href*='/news/'][href$='.html']"
-      ],
-      "card_selectors": [
-        "[class*='media-item__MediaContainer']"
-      ],
-      "include_url_patterns": [
-        "pitchero\\.com/news/.+\\.html"
-      ],
-      "exclude_url_patterns": [
-        "/news/?$",
-        "/teams?/",
-        "/matches?",
-        "/fixtures?",
-        "/tables?",
-        "/sponsors?",
-        "/contact",
-        "/login",
-        "/join",
-        "/photos?",
-        "/videos?",
-        "/media"
-      ],
+      "organisation": "Grimsby Town Football Club",
+      "listing_url": "https://gtfc.co.uk/category/club-news/",
+      "location": "North East Lincolnshire",
       "tags": [
-        "Harworth",
-        "Bircotes",
-        "Bassetlaw",
+        "North East Lincolnshire",
         "Football"
       ],
-      "max_stories": 20
+      "max_stories": 30
     },
     {
-      "name": "Worksop Harriers Athletic Club",
-      "sport": "Athletics",
-      "organisation": "Worksop Harriers Athletic Club",
-      "listing_url": "https://worksopharriers.co.uk/blog",
-      "article_link_selectors": [
-        "article h2 a[href]",
-        "article h3 a[href]",
-        ".elementor-post__title a[href]",
-        ".entry-title a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "card_selectors": [
-        "article",
-        ".elementor-post",
-        ".post",
-        ".entry"
-      ],
-      "include_url_patterns": [
-        "worksopharriers\\.co\\.uk/.+"
-      ],
-      "exclude_url_patterns": [
-        "/blog/?$",
-        "/category/",
-        "/author/",
-        "/page/"
-      ],
+      "name": "Cleethorpes Town",
+      "sport": "Football",
+      "organisation": "Cleethorpes Town Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/cleethorpestown/news",
+      "location": "North East Lincolnshire",
       "tags": [
-        "Running",
-        "Track and Field",
-        "Bassetlaw"
+        "North East Lincolnshire",
+        "Football"
       ],
-      "max_stories": 20
+      "max_stories": 30
     },
     {
-      "name": "Nottingham Forest",
+      "name": "Grantham Town",
       "sport": "Football",
-      "organisation": "Nottingham Forest Football Club",
-      "location": "Regional",
-      "listing_url": "https://www.nottinghamforest.co.uk/news/",
-      "include_url_patterns": ["nottinghamforest\\.co\\.uk/news/.+"],
-      "exclude_url_patterns": [
-        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
-        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
-        "/videos?", "/gallery"
-      ],
-      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
-      "tags": ["Nottingham", "Nottinghamshire", "East Midlands", "Regional", "Football"],
-      "content_api_url": "https://news.cms.web.gc.nffcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
-      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
-      "max_stories": 25
-    },
-    {
-      "name": "Notts County",
-      "sport": "Football",
-      "organisation": "Notts County Football Club",
-      "location": "Regional",
-      "listing_url": "https://www.nottscountyfc.co.uk/news/",
-      "include_url_patterns": ["nottscountyfc\\.co\\.uk/news/.+"],
-      "exclude_url_patterns": [
-        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
-        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
-        "/videos?", "/gallery"
-      ],
-      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
-      "tags": ["Nottingham", "Nottinghamshire", "East Midlands", "Regional", "Football"],
-      "content_api_url": "https://news.cms.web.gc.nottscountyfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
-      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
-      "max_stories": 25
-    },
-    {
-      "name": "Mansfield Town",
-      "sport": "Football",
-      "organisation": "Mansfield Town Football Club",
-      "location": "Regional",
-      "listing_url": "https://www.mansfieldtown.net/news/",
-      "include_url_patterns": ["mansfieldtown\\.net/news/.+"],
-      "exclude_url_patterns": [
-        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
-        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
-        "/videos?", "/gallery"
-      ],
-      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
-      "tags": ["Mansfield", "Nottinghamshire", "East Midlands", "Regional", "Football"],
-      "content_api_url": "https://news.cms.web.gc.mansfieldtownfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
-      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
-      "max_stories": 25
-    },
-    {
-      "name": "Sheffield United",
-      "sport": "Football",
-      "organisation": "Sheffield United Football Club",
-      "location": "Regional",
-      "listing_url": "https://www.sufc.co.uk/news/",
-      "include_url_patterns": ["sufc\\.co\\.uk/news/.+"],
-      "exclude_url_patterns": [
-        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
-        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
-        "/videos?", "/gallery"
-      ],
-      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
-      "tags": ["Sheffield", "South Yorkshire", "Regional", "Football"],
-      "content_api_url": "https://news.cms.web.gc.sufcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
-      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
-      "max_stories": 25
-    },
-    {
-      "name": "Sheffield Wednesday",
-      "sport": "Football",
-      "organisation": "Sheffield Wednesday Football Club",
-      "location": "Regional",
-      "listing_url": "https://www.swfc.co.uk/news/",
-      "include_url_patterns": ["swfc\\.co\\.uk/news/.+"],
-      "exclude_url_patterns": [
-        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
-        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
-        "/videos?", "/gallery"
-      ],
-      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
-      "tags": ["Sheffield", "South Yorkshire", "Regional", "Football"],
-      "content_api_url": "https://news.cms.web.gc.sheffieldwednesdayfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
-      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
-      "max_stories": 25
-    },
-    {
-      "name": "Doncaster Rovers",
-      "sport": "Football",
-      "organisation": "Doncaster Rovers Football Club",
-      "location": "Regional",
-      "listing_url": "https://www.doncasterroversfc.co.uk/news/",
-      "include_url_patterns": ["doncasterroversfc\\.co\\.uk/news/.+"],
-      "exclude_url_patterns": [
-        "/news/?$", "/fixtures?", "/results?", "/tables?", "/squads?", "/teams?",
-        "/tickets?", "/hospitality", "/shop", "/sponsors?", "/account", "/login",
-        "/videos?", "/gallery"
-      ],
-      "exclude_title_patterns": ["ticket", "hospitality", "shop", "gallery", "watch live"],
-      "tags": ["Doncaster", "South Yorkshire", "Regional", "Football"],
-      "content_api_url": "https://news.cms.web.gc.doncasterroversfcservices.co.uk/v2/search?page.size=40&sort=publishedDateTime:desc",
-      "exclude_api_categories": ["ticket", "hospitality", "commercial", "shop", "sponsor", "gallery", "video"],
-      "max_stories": 25
-    },
-    {
-      "name": "Bassetlaw Swim Squad",
-      "sport": "Swimming",
-      "organisation": "Bassetlaw Swim Squad",
-      "listing_url": "https://www.bassetlawswimsquad.org.uk/bss-events",
-      "article_link_selectors": [
-        "main a[href]",
-        "article a[href]",
-        "h2 a[href]",
-        "h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "bassetlawswimsquad\\.org\\.uk/"
-      ],
-      "exclude_url_patterns": [
-        "/meet-the-coaches",
-        "/about",
-        "/contact",
-        "\\.pdf($|\\?)"
-      ],
-      "exclude_title_patterns": [
-        "download",
-        "meet pack",
-        "home",
-        "current bss events",
-        "previous bss events"
-      ],
+      "organisation": "Grantham Town Football Club",
+      "listing_url": "https://www.granthamtownfc.com/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Aquatics",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Football"
       ],
-      "max_stories": 15,
-      "standalone_item_selectors": [
-        "main h1",
-        "main h2",
-        "main h3"
-      ]
+      "max_stories": 30
     },
     {
-      "name": "Bassetlaw Bulldogs RLFC",
-      "sport": "Rugby League",
-      "organisation": "Bassetlaw Bulldogs RLFC",
-      "listing_url": "https://bassetlawbulldogs.co.uk/latest-news",
-      "article_link_selectors": [
-        "main a[href]",
-        "article a[href]",
-        "h2 a[href]",
-        "h3 a[href]",
-        "h4 a[href]"
-      ],
-      "include_url_patterns": [
-        "bassetlawbulldogs\\.co\\.uk/"
-      ],
-      "exclude_url_patterns": [
-        "/latest-news/?$",
-        "/membership",
-        "/club-shop",
-        "/privacy"
-      ],
-      "exclude_title_patterns": [
-        "download pdf",
-        "latest news",
-        "where and when",
-        "who and what",
-        "coaching team",
-        "why rugby league",
-        "where can i find more information"
-      ],
+      "name": "Spalding United",
+      "sport": "Football",
+      "organisation": "Spalding United Football Club",
+      "listing_url": "https://www.spaldingunited.net/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Rugby",
-        "East Markham",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Football"
       ],
-      "max_stories": 15,
-      "standalone_item_selectors": [
-        "main h2",
-        "main h3",
-        "main h4"
-      ]
+      "max_stories": 30
     },
     {
-      "name": "Worksop RUFC",
+      "name": "Stamford AFC",
+      "sport": "Football",
+      "organisation": "Stamford Association Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/stamfordafc/news",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Football"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Bourne Town",
+      "sport": "Football",
+      "organisation": "Bourne Town Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/bournetown/news",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Football"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Boston Town",
+      "sport": "Football",
+      "organisation": "Boston Town Football Club",
+      "listing_url": "https://bostontownfc.co.uk/",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Football"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Lincolnshire Cricket",
+      "sport": "Cricket",
+      "organisation": "Lincolnshire Cricket",
+      "listing_url": "https://lincscricket.co.uk/news/",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Cricket"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "NLD Rugby",
       "sport": "Rugby Union",
-      "organisation": "Worksop Rugby Union Football Club",
-      "listing_url": "https://worksoprufc.rfu.club/news",
-      "article_link_selectors": [
-        "article a[href]",
-        ".news a[href]",
-        ".news-item a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "worksoprufc\\.rfu\\.club/news/"
-      ],
-      "exclude_url_patterns": [
-        "/news/?$"
-      ],
+      "organisation": "Nottinghamshire Lincolnshire and Derbyshire RFU",
+      "listing_url": "https://nldrfu.co.uk/news/",
+      "location": "Regional",
       "tags": [
-        "Rugby",
-        "Worksop",
-        "Bassetlaw"
+        "Regional",
+        "Rugby Union"
       ],
-      "max_stories": 15
+      "max_stories": 30,
+      "geographic_filter": "lincolnshire-strict"
     },
     {
-      "name": "Worksop Cricket Club",
-      "sport": "Cricket",
-      "organisation": "Worksop Cricket and Sports Club",
-      "listing_url": "https://worksopcricketandsportsclub.co.uk/cricket/",
-      "article_link_selectors": [
-        "article a[href]",
-        ".post a[href]",
-        ".blog a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "worksopcricketandsportsclub\\.co\\.uk/"
-      ],
-      "exclude_url_patterns": [
-        "/cricket/?$",
-        "/join",
-        "/about",
-        "/contact"
-      ],
+      "name": "Lincoln Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Lincoln Rugby Club",
+      "listing_url": "https://www.lincolnrugbyclub.co.uk/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Worksop",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Rugby Union"
       ],
-      "max_stories": 12,
-      "standalone_item_selectors": [
-        "main h2",
-        "main h3"
-      ]
+      "max_stories": 30
     },
     {
-      "name": "Worksop Flat Green Bowls",
-      "sport": "Bowls",
-      "organisation": "Worksop Cricket and Sports Club",
-      "listing_url": "https://worksopcricketandsportsclub.co.uk/flat-green-bowls/",
-      "article_link_selectors": [
-        "article a[href]",
-        ".post a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "worksopcricketandsportsclub\\.co\\.uk/"
-      ],
-      "exclude_url_patterns": [
-        "/flat-green-bowls/?$",
-        "/join",
-        "/about",
-        "/contact"
-      ],
+      "name": "Boston Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Boston Rugby Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/boston/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Flat Green Bowls",
-        "Worksop",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Rugby Union"
       ],
-      "max_stories": 10,
-      "standalone_item_selectors": [
-        "main h2",
-        "main h3"
-      ]
+      "max_stories": 30
     },
     {
-      "name": "Worksop Crown Green Bowls",
-      "sport": "Bowls",
-      "organisation": "Worksop Cricket and Sports Club",
-      "listing_url": "https://worksopcricketandsportsclub.co.uk/crown-bowls/",
-      "article_link_selectors": [
-        "article a[href]",
-        ".post a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "worksopcricketandsportsclub\\.co\\.uk/"
-      ],
-      "exclude_url_patterns": [
-        "/crown-bowls/?$",
-        "/join",
-        "/about",
-        "/contact"
-      ],
+      "name": "Scunthorpe Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Scunthorpe Rugby Club",
+      "listing_url": "https://www.pitchero.com/clubs/scunthorpe/news",
+      "location": "North Lincolnshire",
       "tags": [
-        "Crown Green Bowls",
-        "Worksop",
-        "Bassetlaw"
+        "North Lincolnshire",
+        "Rugby Union"
       ],
-      "max_stories": 10,
-      "standalone_item_selectors": [
-        "main h2",
-        "main h3"
-      ]
+      "max_stories": 30
     },
     {
-      "name": "Worksop Squash Club",
-      "sport": "Squash",
-      "organisation": "Worksop Cricket and Sports Club",
-      "listing_url": "https://worksopcricketandsportsclub.co.uk/",
-      "article_link_selectors": [
-        "a[href*='squash']",
-        "a[href*='racketball']"
-      ],
-      "include_url_patterns": [
-        "worksopcricketandsportsclub\\.co\\.uk/.+(squash|racketball)"
-      ],
+      "name": "Stamford Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Stamford Rugby Club",
+      "listing_url": "https://www.pitchero.com/clubs/stamfordrugbyclub/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Racketball",
-        "Worksop",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Rugby Union"
       ],
-      "max_stories": 10
+      "max_stories": 30
     },
     {
-      "name": "Cuckney Cricket Club",
-      "sport": "Cricket",
-      "organisation": "Cuckney Cricket Club",
-      "listing_url": "https://cuckney.play-cricket.com/",
-      "article_link_selectors": [
-        "a[href*='/News/']",
-        "a[href*='/news/']",
-        "article a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "cuckney\\.play-cricket\\.com/(News|news)/"
-      ],
+      "name": "Spalding Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Spalding Rugby Club",
+      "listing_url": "https://www.pitchero.com/clubs/spaldingrfc/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Cuckney",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Rugby Union"
       ],
-      "max_stories": 15
+      "max_stories": 30
     },
     {
-      "name": "Ordsall Bridon Cricket Club",
-      "sport": "Cricket",
-      "organisation": "Ordsall Bridon Cricket Club",
-      "listing_url": "https://bridon.play-cricket.com/",
-      "article_link_selectors": [
-        "a[href*='/News/']",
-        "a[href*='/news/']",
-        "article a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "bridon\\.play-cricket\\.com/(News|news)/"
-      ],
+      "name": "Lindum Hockey Club",
+      "sport": "Hockey",
+      "organisation": "Lindum Hockey Club",
+      "listing_url": "https://lindumhockey.co.uk/news/",
+      "location": "Lincolnshire",
       "tags": [
-        "Ordsall",
-        "Retford",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Hockey"
       ],
-      "max_stories": 15
+      "max_stories": 30
     },
     {
-      "name": "Rockware Cricket Club",
-      "sport": "Cricket",
-      "organisation": "Rockware Cricket Club",
-      "listing_url": "https://rockware.play-cricket.com/",
-      "article_link_selectors": [
-        "a[href*='/News/']",
-        "a[href*='/news/']",
-        "article a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "rockware\\.play-cricket\\.com/(News|news)/"
-      ],
+      "name": "Spalding Hockey Club",
+      "sport": "Hockey",
+      "organisation": "Spalding Hockey Club",
+      "listing_url": "https://www.spaldinghockeyclub.co.uk/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Worksop",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Hockey"
       ],
-      "max_stories": 15
+      "max_stories": 30
     },
     {
-      "name": "Welbeck Cricket Club",
-      "sport": "Cricket",
-      "organisation": "Welbeck Cricket Club",
-      "listing_url": "https://welbeck.play-cricket.com/",
-      "article_link_selectors": [
-        "a[href*='/News/']",
-        "a[href*='/news/']",
-        "article a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "welbeck\\.play-cricket\\.com/(News|news)/"
-      ],
+      "name": "Active Lincolnshire",
+      "sport": "Multi-sport",
+      "organisation": "Active Lincolnshire",
+      "listing_url": "https://www.activelincolnshire.com/news",
+      "location": "Lincolnshire",
       "tags": [
-        "Welbeck",
-        "Bassetlaw"
+        "Lincolnshire",
+        "Multi-sport"
       ],
-      "max_stories": 15
+      "max_stories": 30
     },
     {
-      "name": "Bassetlaw District Sports Events",
-      "sport": "Community Sport",
-      "organisation": "Bassetlaw District Council",
-      "listing_url": "https://www.bassetlaw.gov.uk/sport-leisure-and-culture/leisure-and-well-being/sports-events/",
-      "article_link_selectors": [
-        "main a[href]",
-        "article a[href]",
-        "main h2 a[href]",
-        "main h3 a[href]"
-      ],
-      "include_url_patterns": [
-        "bassetlaw\\.gov\\.uk/sport-leisure-and-culture/"
-      ],
-      "exclude_url_patterns": [
-        "/sports-events/?$",
-        "/contact",
-        "/privacy",
-        "/accessibility"
-      ],
+      "name": "Scunthorpe Scorpions",
+      "sport": "Speedway",
+      "organisation": "Scunthorpe Speedway",
+      "listing_url": "https://www.scunthorpe-speedway.co.uk/speedway/",
+      "location": "North Lincolnshire",
       "tags": [
-        "Community Sport",
-        "Bassetlaw"
+        "North Lincolnshire",
+        "Speedway"
       ],
-      "max_stories": 15
+      "max_stories": 30
+    },
+    {
+      "name": "Lincolnshire Athletics",
+      "sport": "Athletics",
+      "organisation": "Lincolnshire Athletics Association",
+      "listing_url": "https://www.lincsathletics.com/",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Athletics"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Lincoln Wellington Athletic Club",
+      "sport": "Athletics",
+      "organisation": "Lincoln Wellington Athletic Club",
+      "listing_url": "https://www.lwac.org.uk/news/",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Athletics"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Lincolnshire Netball",
+      "sport": "Netball",
+      "organisation": "Lincolnshire County Netball",
+      "listing_url": "https://lincolnshirenetball.co.uk/news/",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Netball"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Sleaford Town",
+      "sport": "Football",
+      "organisation": "Sleaford Town Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/sleafordtown/news",
+      "location": "Lincolnshire",
+      "tags": ["Sleaford", "Football"],
+      "max_stories": 20
+    },
+    {
+      "name": "Grimsby Borough",
+      "sport": "Football",
+      "organisation": "Grimsby Borough Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/grimsbyboroughfc/news",
+      "location": "North East Lincolnshire",
+      "tags": ["Grimsby", "Football"],
+      "max_stories": 20
+    },
+    {
+      "name": "Grimsby Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Grimsby Rugby Union Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/grimsbyrufc/news",
+      "location": "North East Lincolnshire",
+      "tags": ["Grimsby", "Rugby Union"],
+      "max_stories": 20
+    },
+    {
+      "name": "Market Rasen and Louth Rugby Club",
+      "sport": "Rugby Union",
+      "organisation": "Market Rasen and Louth Rugby Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/marketrasenandlouth/news",
+      "location": "Lincolnshire",
+      "tags": ["Market Rasen", "Louth", "Rugby Union"],
+      "max_stories": 20
+    },
+    {
+      "name": "Lincolnshire Golf",
+      "sport": "Golf",
+      "organisation": "Lincolnshire Union of Golf Clubs",
+      "listing_url": "https://www.lugc.co.uk/news.php",
+      "location": "Lincolnshire",
+      "tags": [
+        "Lincolnshire",
+        "Golf"
+      ],
+      "max_stories": 30
+    },
+    {
+      "name": "Lincoln City",
+      "sport": "Football",
+      "organisation": "Lincoln City Football Club",
+      "listing_url": "https://www.weareimps.com/news",
+      "location": "Lincolnshire",
+      "tags": ["Lincoln", "Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Lincoln United",
+      "sport": "Football",
+      "organisation": "Lincoln United Football Club",
+      "listing_url": "https://www.pitchero.com/clubs/lincolnunited/news",
+      "location": "Lincolnshire",
+      "tags": ["Lincoln", "Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Gainsborough Trinity",
+      "sport": "Football",
+      "organisation": "Gainsborough Trinity Football Club",
+      "listing_url": "https://www.gainsboroughtrinity.com/news/team-news",
+      "location": "Lincolnshire",
+      "tags": ["Gainsborough", "Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Boston United",
+      "sport": "Football",
+      "organisation": "Boston United Football Club",
+      "listing_url": "https://www.bostonunited.co.uk/news",
+      "location": "Lincolnshire",
+      "tags": ["Boston", "Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Scunthorpe United",
+      "sport": "Football",
+      "organisation": "Scunthorpe United Football Club",
+      "listing_url": "https://www.scunthorpe-united.co.uk/news",
+      "location": "North Lincolnshire",
+      "tags": ["Scunthorpe", "North Lincolnshire", "Football"],
+      "max_stories": 30
     }
   ]
 }

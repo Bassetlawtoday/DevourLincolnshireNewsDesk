@@ -27,12 +27,9 @@ def default_club_scrapers() -> list[object]:
     """Create fresh instances of all configured official club scrapers."""
 
     return [
-        RetfordFCScraper(),
-        SJRWorksopScraper(),
         LincolnCityScraper(),
         LincolnUnitedScraper(),
         GainsboroughTrinityScraper(),
-        AlfretonTownScraper(),
         BostonUnitedScraper(),
         ScunthorpeUnitedScraper(),
     ]

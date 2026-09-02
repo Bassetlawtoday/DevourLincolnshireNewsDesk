@@ -68,13 +68,58 @@ def _is_image_file_url(value: str | None) -> bool:
     return suffix in _IMAGE_SOURCE_SUFFIXES
 
 
+def _normalise_web_url(value: str | None) -> str:
+    raw = str(value or "").strip().rstrip(".,;:!?)\"]}")
+    if not raw:
+        return ""
+    if raw.casefold().startswith("www."):
+        raw = "https://" + raw
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return ""
+    return raw if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
+def _configured_source_url(source_name: str | None) -> str:
+    wanted = str(source_name or "").strip().casefold()
+    if not wanted:
+        return ""
+    try:
+        config = next(
+            (source for source in SourceCatalog.load_default().sources if source.name.casefold() == wanted),
+            None,
+        )
+    except (OSError, ValueError, TypeError):
+        config = None
+    return _normalise_web_url(config.url if config else "")
+
+
 def _row_provenance_url(row) -> str:
     """Select an event/ticket page, never a collected image-file address."""
     for field in ("event_url", "ticket_url"):
-        value = str(row[field] or "").strip()
+        value = _normalise_web_url(row[field])
         if value and not _is_image_file_url(value):
             return value
-    return ""
+    try:
+        return _configured_source_url(row["preferred_source"])
+    except (KeyError, IndexError):
+        return ""
+
+
+_CONTENT_URL_RE = re.compile(
+    r"(?i)(?:https?://|www\.)[^\s<>]+|(?<![@\w])(?:[a-z0-9-]+\.)+(?:co\.uk|org\.uk|gov\.uk|ac\.uk|com|org|net)(?:/[^\s<>]*)?"
+)
+
+
+def _content_links(text: str) -> list[tuple[int, int, str]]:
+    links = []
+    for match in _CONTENT_URL_RE.finditer(text or ""):
+        display = match.group(0).rstrip(".,;:!?)\"]}")
+        url = _normalise_web_url(display)
+        if url:
+            links.append((match.start(), match.start() + len(display), url))
+    return links
 
 
 def _connect():
@@ -249,6 +294,7 @@ class _EventDescriptionParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts = []
         self._ignored_depth = 0
+        self._links = []
 
     def handle_starttag(self, tag, attrs) -> None:
         if tag.casefold() in {"script", "style"}:
@@ -257,6 +303,9 @@ class _EventDescriptionParser(HTMLParser):
             "br", "div", "p", "li", "h1", "h2", "h3", "h4", "h5", "h6"
         }:
             self.parts.append("\n\n")
+        if not self._ignored_depth and tag.casefold() == "a":
+            href = next((value for name, value in attrs if name.casefold() == "href"), "")
+            self._links.append(str(href or "").strip())
 
     def handle_endtag(self, tag) -> None:
         if tag.casefold() in {"script", "style"} and self._ignored_depth:
@@ -267,6 +316,10 @@ class _EventDescriptionParser(HTMLParser):
             self.parts.append("\n\n")
         elif not self._ignored_depth:
             self.parts.append(" ")
+        if not self._ignored_depth and tag.casefold() == "a" and self._links:
+            href = self._links.pop()
+            if href.startswith(("http://", "https://", "mailto:")):
+                self.parts.append(f" {href} ")
 
     def handle_data(self, data) -> None:
         if not self._ignored_depth:
@@ -311,6 +364,12 @@ def _row_display_category(row) -> str:
         or row["category"]
         or ""
     ).strip()
+
+
+def _row_is_cinema_event(row) -> bool:
+    return _row_display_category(row).casefold() in {
+        "film", "cinema", "movie", "event cinema"
+    }
 
 
 def _event_newsletter_copy(row) -> str:
@@ -403,7 +462,7 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
         super().__init__(master)
         self._support = IntelligenceWindowSupport(self, master)
         self._support.install()
-        self.title("Events Intelligence - NewsDesk Pro")
+        self.title("Events Intelligence - Devour Lincolnshire NewsDesk")
         self.geometry("1500x900")
         self.minsize(1180, 720)
         self.configure(fg_color=APP_BG)
@@ -549,13 +608,18 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
                     enabled_names,
                 ).fetchall()
                 rejections = _load_rejections()
-                self.rows = [row for row in db_rows if not _row_is_rejected(row, rejections) and not _row_fails_quality_gate(row)]
+                self.rows = [
+                    row for row in db_rows
+                    if not _row_is_rejected(row, rejections)
+                    and not _row_fails_quality_gate(row)
+                    and not _row_is_cinema_event(row)
+                ]
         finally:
             connection.close()
         self._set_filter_values(); self.apply_filters()
         if self.selected is None:
             self._render_empty("Select an event to view its details.")
-        self.status.configure(text=f"Loaded {len(self.rows):,} current events from enabled four-county feeds")
+        self.status.configure(text=f"Loaded {len(self.rows):,} current Greater Lincolnshire events")
 
     def _set_filter_values(self):
         def values(field): return [ALL,*sorted({str(r[field]).strip() for r in self.rows if r[field]},key=str.casefold)]
@@ -623,7 +687,7 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
         description = _clean_event_description(row["description"])
         if description:
             ctk.CTkLabel(self.detail,text="DESCRIPTION",font=("Arial",12,"bold"),text_color=TEXT_PRIMARY,anchor="w").pack(fill="x",pady=(14,4))
-            ctk.CTkLabel(self.detail,text=description,text_color=TEXT_SECONDARY,wraplength=520,justify="left",anchor="w").pack(fill="x")
+            self._render_linkable_description(description)
         image_url = str(row["image_url"] or "").strip()
         ctk.CTkLabel(self.detail,text="SOURCE IMAGE",font=("Arial",12,"bold"),text_color=TEXT_PRIMARY,anchor="w").pack(fill="x",pady=(16,4))
         self._image_status_label = ctk.CTkLabel(
@@ -649,6 +713,25 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
         second_actions=ctk.CTkFrame(self.detail,fg_color="transparent"); second_actions.pack(fill="x",pady=(0,6))
         ctk.CTkButton(second_actions,text="ADD TO SOCIALS",width=145,fg_color=ACTION_BLUE,hover_color=ACTION_BLUE_HOVER,command=self.add_to_social_desk).pack(side="left",padx=(0,5))
         ctk.CTkButton(second_actions,text="NOT AN EVENT",width=145,fg_color=BRAND_RED,hover_color=BRAND_RED_HOVER,command=self.reject_selected_event).pack(side="left")
+
+    def _render_linkable_description(self, description: str) -> None:
+        lines = max(3, min(22, description.count("\n") + (len(description) // 82) + 1))
+        widget = tk.Text(
+            self.detail, height=lines, wrap="word", bg=CARD_BG, fg=TEXT_SECONDARY,
+            insertbackground=TEXT_PRIMARY, relief="flat", borderwidth=0,
+            highlightthickness=0, font=("Arial", 12), cursor="arrow",
+        )
+        widget.insert("1.0", description)
+        widget.tag_configure("event_link", foreground="#60A5FA", underline=True)
+        for index, (start, end, url) in enumerate(_content_links(description)):
+            tag = f"event_link_{index}"
+            widget.tag_add("event_link", f"1.0+{start}c", f"1.0+{end}c")
+            widget.tag_add(tag, f"1.0+{start}c", f"1.0+{end}c")
+            widget.tag_bind(tag, "<Button-1>", lambda _event, target=url: webbrowser.open(target))
+            widget.tag_bind(tag, "<Enter>", lambda _event, view=widget: view.configure(cursor="hand2"))
+            widget.tag_bind(tag, "<Leave>", lambda _event, view=widget: view.configure(cursor="arrow"))
+        widget.configure(state="disabled")
+        widget.pack(fill="x")
 
     def _load_image_preview(self, request_id, image_url, title):
         asset = self._image_service.get(image_url, fallback_title=title)
@@ -728,29 +811,10 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
     def add_to_social_desk(self):
         if getattr(self, "selected", None) is None:
             return
-        from types import SimpleNamespace
         from newsdesk.social.selection import add_story_to_social_desk
         row = self.selected
-
-        def social_value(*names):
-            for name in names:
-                try:
-                    value = row[name]
-                except (KeyError, IndexError, TypeError):
-                    value = getattr(row, name, "")
-                if str(value or "").strip():
-                    return str(value).strip()
-            return ""
-
-        story = SimpleNamespace(
-            title=social_value("display_title", "title", "headline"),
-            summary=social_value("summary", "description", "body", "content"),
-            body=social_value("body", "content", "description", "summary"),
-            url=social_value("source_url", "event_url", "url", "ticket_url"),
-            image_url=social_value("image_url", "source_image_url"),
-            image_caption=social_value("image_caption", "caption", "image_alt_text"),
-            image_credit=social_value("image_credit", "credit", "preferred_source"),
-        )
+        story = _event_story(row)
+        story.body = story.summary
         add_story_to_social_desk(self, story, module_key="events")
 
     def open_social_desk(self):

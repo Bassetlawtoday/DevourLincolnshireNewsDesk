@@ -1,47 +1,43 @@
 {
   "recency_days": 14,
   "max_listing_pages": 3,
-  "request_timeout_seconds": 20,
+  "request_timeout_seconds": 25,
   "sources": [
-    {
-      "key": "bassetlaw_district_council",
-      "name": "Bassetlaw District Council",
-      "url": "https://www.bassetlaw.gov.uk/media-centre/news/latest-news/",
-      "enabled": true
-    },
-    {
-      "key": "nottinghamshire_county_council",
-      "name": "Nottinghamshire County Council",
-      "url": "https://newsroom.nottinghamshire.gov.uk/news/",
-      "enabled": true
-    },
-    {
-      "key": "east_midlands_cca",
-      "name": "East Midlands Combined County Authority",
-      "url": "https://www.eastmidlands-cca.gov.uk/news/",
-      "enabled": true
-    }
+    {"key":"lincolnshire_county_council","name":"Lincolnshire County Council","url":"https://www.lincolnshire.gov.uk/news","enabled":true,"detail_path_patterns":["^/news/article/"]},
+    {"key":"boston_borough_council","name":"Boston Borough Council","url":"https://www.boston.gov.uk/News?p=1","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":"site:boston.gov.uk/article Boston Borough Council"},
+    {"key":"east_lindsey_district_council","name":"East Lindsey District Council","url":"https://www.e-lindsey.gov.uk/LatestNews?p=1","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":"site:e-lindsey.gov.uk/article East Lindsey District Council"},
+    {"key":"city_of_lincoln_council","name":"City of Lincoln Council","url":"https://www.lincoln.gov.uk/news","enabled":true,"detail_path_patterns":["^/news/article/"]},
+    {"key":"north_kesteven_district_council","name":"North Kesteven District Council","url":"https://www.n-kesteven.gov.uk/council-news","enabled":true,"detail_path_patterns":["^/council-news/\\d{4}/\\d{2}/"]},
+    {"key":"south_holland_district_council","name":"South Holland District Council","url":"https://www.sholland.gov.uk/News?p=1","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":"site:sholland.gov.uk/article South Holland District Council"},
+    {"key":"south_kesteven_district_council","name":"South Kesteven District Council","url":"https://www.southkesteven.gov.uk/news","enabled":true,"detail_path_patterns":["^/news/\\d{4}/"]},
+    {"key":"west_lindsey_district_council","name":"West Lindsey District Council","url":"https://www.west-lindsey.gov.uk/council-news","enabled":true,"detail_path_patterns":["^/council-news/\\d{4}/\\d{2}/"]},
+    {"key":"north_lincolnshire_council","name":"North Lincolnshire Council","url":"https://www.northlincs.gov.uk/news/category/council-news/","enabled":true,"detail_path_patterns":["^/news/(?!category/|page/)[^/]+/$"],"search_fallback_query":"site:northlincs.gov.uk/news North Lincolnshire Council"},
+    {"key":"north_east_lincolnshire_council","name":"North East Lincolnshire Council","url":"https://www.nelincs.gov.uk/news/","enabled":true,"detail_path_patterns":["^/(?!news/|category/|tag/|author/)[^/]+/$"]},
+    {"key":"greater_lincolnshire_cca","name":"Greater Lincolnshire Combined County Authority","url":"https://greaterlincolnshire-cca.gov.uk/news","enabled":true,"detail_path_patterns":["^/news/article/"]},
+    {"key":"south_east_lincolnshire_councils_partnership","name":"South & East Lincolnshire Councils Partnership","url":"https://www.selcp.co.uk/article/20048/News","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":"site:selcp.co.uk/article South East Lincolnshire Councils Partnership"}
   ],
-  "bassetlaw_locations": [
-    "Bassetlaw", "Worksop", "Retford", "Harworth", "Bircotes", "Misterton",
-    "Tuxford", "Carlton-in-Lindrick", "Carlton in Lindrick", "Langold", "Manton",
-    "Rhodesia", "Shireoaks", "Whitwell", "Creswell", "Blyth", "Ranskill",
-    "Mattersey", "Everton", "Gringley-on-the-Hill", "Gringley on the Hill",
-    "Walkeringham", "Beckingham", "Misson", "North Leverton", "South Leverton",
-    "East Markham", "West Stockwith", "North Wheatley", "Sturton le Steeple",
-    "Clarborough", "Hayton", "Babworth", "Elkesley", "Gamston", "West Drayton",
-    "West Burton", "Cottam", "Clumber Park", "Welbeck"
+  "principal_source_keys": [
+    "boston_borough_council", "east_lindsey_district_council", "city_of_lincoln_council",
+    "north_kesteven_district_council", "south_holland_district_council",
+    "south_kesteven_district_council", "west_lindsey_district_council",
+    "north_lincolnshire_council", "north_east_lincolnshire_council"
   ],
-  "ambiguous_locations": ["Everton", "Gamston"],
+  "lincolnshire_locations": [
+    "Lincolnshire", "Lincoln", "Boston", "East Lindsey", "North Kesteven", "South Holland",
+    "South Kesteven", "West Lindsey", "North Lincolnshire", "North East Lincolnshire",
+    "Grantham", "Stamford", "Spalding", "Skegness", "Louth", "Horncastle", "Sleaford",
+    "Gainsborough", "Market Rasen", "Caistor", "Mablethorpe", "Alford", "Wainfleet",
+    "Woodhall Spa", "Coningsby", "Tattershall", "Bourne", "The Deepings", "Deeping St James",
+    "Market Deeping", "Holbeach", "Long Sutton", "Crowland", "Donington", "Kirton",
+    "Scunthorpe", "Barton-upon-Humber", "Brigg", "Epworth", "Crowle", "Winterton",
+    "Grimsby", "Cleethorpes", "Immingham", "Waltham", "Humberston", "Healing"
+  ],
+  "ambiguous_locations": ["Lincoln"],
   "high_local_importance_terms": [
-    "across nottinghamshire", "county-wide", "countywide", "all nottinghamshire",
-    "local government reorganisation", "north nottinghamshire", "a614", "a1",
-    "bus service", "bus travel", "bus fares", "rail service", "adult social care", "children's services",
-    "school transport", "skills programme", "employment programme",
-    "regional investment", "available across nottinghamshire"
+    "county-wide", "countywide", "across lincolnshire", "greater lincolnshire",
+    "local government reorganisation", "devolution", "combined county authority",
+    "bus service", "bus travel", "rail service", "adult social care", "children's services",
+    "school transport", "flooding", "coastal", "regional investment"
   ],
-  "outside_district_terms": [
-    "Derby", "Derbyshire", "Leicester", "Leicestershire", "Nottingham city",
-    "Rushcliffe", "Ashfield", "Mansfield", "Broxtowe", "Gedling", "Newark"
-  ]
+  "outside_area_terms": ["Nottinghamshire", "Derbyshire", "Leicestershire", "Yorkshire"]
 }

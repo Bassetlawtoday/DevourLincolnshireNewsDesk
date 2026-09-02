@@ -15,6 +15,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.support.ui import WebDriverWait
 
+from newsdesk.geography.lincolnshire import match_lincolnshire
+
 
 class ContentExplorerError(RuntimeError):
     """Safe user-facing collection failure."""
@@ -49,7 +51,10 @@ def _normalise_date(value: str) -> str:
 
 
 def _credit_from_caption(value: str) -> str:
-    match = re.search(r"\bCredit:\s*(.+)$", str(value or ""), flags=re.IGNORECASE)
+    match = re.search(
+        r"\b(?:Credit:|Photo(?:graph)?(?:\s+credit)?:?)\s*(.+)$",
+        str(value or ""), flags=re.IGNORECASE,
+    )
     return match.group(1).strip() if match else ""
 
 
@@ -172,6 +177,80 @@ def _parse_listing_text(text: str, url: str) -> dict:
     return story
 
 
+def _is_lincolnshire_record(record: dict) -> bool:
+    """Keep LDRS records carrying explicit Greater Lincolnshire evidence."""
+
+    return match_lincolnshire(
+        (
+            " ".join(record.get("authorities") or []),
+            record.get("title", ""),
+            record.get("slug", ""),
+            record.get("summary", ""),
+        )
+    ).matched
+
+
+def _visible_text_with_links(driver: WebDriver) -> str:
+    """Return rendered page text while retaining useful embedded web URLs."""
+
+    script = r"""
+        const root = document.body.cloneNode(true);
+        for (const anchor of root.querySelectorAll('a[href]')) {
+            const raw = (anchor.getAttribute('href') || '').trim();
+            if (!raw || raw.startsWith('#') || raw.startsWith('javascript:')) continue;
+            let href = raw;
+            try { href = new URL(raw, document.baseURI).href; } catch (_) {}
+            const label = (anchor.innerText || anchor.textContent || '').trim();
+            if (/^https?:\/\//i.test(href) && label && label.toLowerCase() !== href.toLowerCase()) {
+                anchor.textContent = `${label} (${href})`;
+            }
+        }
+        return root.innerText;
+    """
+    value = driver.execute_script(script)
+    return str(value or driver.find_element(By.TAG_NAME, "body").text)
+
+
+def _attachment_text(driver: WebDriver, element) -> str:
+    """Read the smallest useful attachment card surrounding a media element."""
+
+    value = driver.execute_script(
+        r"""
+        let node = arguments[0];
+        while (node && node !== document.body) {
+            const text = (node.innerText || '').trim();
+            if (text.length >= 8 && text.length <= 1200) return text;
+            if (text.length > 1200) break;
+            node = node.parentElement;
+        }
+        return '';
+        """,
+        element,
+    )
+    return "\n".join(line.strip() for line in str(value or "").splitlines() if line.strip())
+
+
+def _remove_attachment_copy(lines: list[str], attachment_texts: list[str]) -> list[str]:
+    """Remove attachment-card captions accidentally flattened into article copy."""
+
+    metadata = {
+        re.sub(r"\s+", " ", line).strip().casefold()
+        for text in attachment_texts
+        for line in str(text or "").splitlines()
+        if line.strip()
+    }
+    result: list[str] = []
+    for line in lines:
+        normal = re.sub(r"\s+", " ", str(line or "")).strip()
+        folded = normal.casefold()
+        if folded and folded in metadata:
+            continue
+        if result and folded == result[-1].casefold():
+            continue
+        result.append(normal)
+    return result
+
+
 class ContentExplorerCollector:
     BASE_URL = "https://ldrs.org.uk"
 
@@ -272,11 +351,33 @@ class ContentExplorerCollector:
 
         target = None if limit is None else max(1, int(limit))
         previous = -1
+        stories: dict[str, dict] = {}
+        inspected_ids: set[str] = set()
         while True:
             links = driver.find_elements(By.CSS_SELECTOR, 'a[href*="/article/"]')
             unique_count = len({_article_id(link.get_attribute("href")) for link in links})
+            for link in links:
+                url = str(link.get_attribute("href") or "").strip()
+                article_id = _article_id(url)
+                if not article_id or article_id in inspected_ids:
+                    continue
+                inspected_ids.add(article_id)
+                record = _parse_listing_text(link.text, url)
+                if not _is_lincolnshire_record(record):
+                    continue
+                image_elements = link.find_elements(By.TAG_NAME, "img")
+                if image_elements:
+                    record["image_url"] = str(image_elements[0].get_attribute("src") or "").strip()
+                stories[article_id] = record
             if on_progress:
-                on_progress(f"Discovered {unique_count:,} LDRS stories…")
+                on_progress(
+                    f"Discovered {len(stories):,} Lincolnshire LDRS stories "
+                    f"from {unique_count:,} accessible records…"
+                )
+            # UPDATE SCOPE limits the number of accessible LDRS records
+            # inspected, not the number of Lincolnshire matches required.
+            # Waiting for (for example) 500 regional matches can otherwise
+            # traverse the complete national archive.
             if target is not None and unique_count >= target:
                 break
             show_more = [element for element in driver.find_elements(By.XPATH, "//*[self::a or self::button][contains(translate(normalize-space(.),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'show more')]") if element.is_displayed()]
@@ -292,20 +393,8 @@ class ContentExplorerCollector:
             except TimeoutException:
                 break
 
-        stories: dict[str, dict] = {}
-        for link in driver.find_elements(By.CSS_SELECTOR, 'a[href*="/article/"]'):
-            url = str(link.get_attribute("href") or "").strip()
-            article_id = _article_id(url)
-            if not article_id or article_id in stories:
-                continue
-            record = _parse_listing_text(link.text, url)
-            image_elements = link.find_elements(By.TAG_NAME, "img")
-            if image_elements:
-                record["image_url"] = str(image_elements[0].get_attribute("src") or "").strip()
-            stories[article_id] = record
-            if target is not None and len(stories) >= target:
-                break
-        return list(stories.values())
+        records = list(stories.values())
+        return records if target is None else records[:target]
 
     def fetch_detail(self, article_id: str) -> dict:
         self.login()
@@ -317,7 +406,7 @@ class ContentExplorerCollector:
             wait.until(lambda d: "Categories:" in d.find_element(By.TAG_NAME, "body").text)
         except TimeoutException as exc:
             raise ContentExplorerError("The full LDRS story did not finish loading.") from exc
-        body_text = driver.find_element(By.TAG_NAME, "body").text
+        body_text = _visible_text_with_links(driver)
         lines = [line.strip() for line in body_text.splitlines() if line.strip()]
         title = ""
         headings = driver.find_elements(By.TAG_NAME, "h1")
@@ -345,30 +434,26 @@ class ContentExplorerCollector:
                 record["categories"] = [category_text] if category_text else []
 
         images = []
+        attachment_texts: list[str] = []
         for image in driver.find_elements(By.CSS_SELECTOR, 'img[src*="ldrs-media-assets"]'):
             src = str(image.get_attribute("src") or "").split("?", 1)[0]
             if src and src not in images:
                 images.append(src)
+                attachment_texts.append(_attachment_text(driver, image))
         record["image_url"] = images[0] if images else ""
+        if attachment_texts:
+            record["image_caption"] = attachment_texts[0]
+            record["image_credit"] = _credit_from_caption(attachment_texts[0])
 
         attachment_marker = next((i for i, line in enumerate(lines) if line.casefold() == "attachments preview"), -1)
         categories_marker = next((i for i, line in enumerate(lines) if line.casefold().startswith("categories:")), len(lines))
         detail_start = 0
         if attachment_marker >= 0:
             detail_start = attachment_marker + 1
-            credit_indexes = [
-                index for index in range(detail_start, categories_marker)
-                if "credit:" in lines[index].casefold()
-            ]
-            caption_lines = [lines[index] for index in credit_indexes]
-            if credit_indexes:
-                detail_start = credit_indexes[-1] + 1
             while detail_start < categories_marker and lines[detail_start].casefold() in {"download text", "download images"}:
                 detail_start += 1
-            if caption_lines:
-                record["image_caption"] = caption_lines[0]
-                record["image_credit"] = _credit_from_caption(caption_lines[0])
         body_lines = _detail_body_lines(lines[detail_start:categories_marker], title, categories_marker - detail_start)
+        body_lines = _remove_attachment_copy(body_lines, attachment_texts)
         record["body"] = "\n\n".join(body_lines).strip()
         record["summary"] = record["body"].split("\n\n", 1)[0] if record["body"] else record["slug"]
 
@@ -386,4 +471,8 @@ class ContentExplorerCollector:
         return url
 
 
-__all__ = ["ContentExplorerCollector", "ContentExplorerError", "_detail_body_lines", "_parse_listing_text"]
+__all__ = [
+    "ContentExplorerCollector", "ContentExplorerError", "_detail_body_lines",
+    "_is_lincolnshire_record", "_parse_listing_text", "_remove_attachment_copy",
+    "_visible_text_with_links",
+]

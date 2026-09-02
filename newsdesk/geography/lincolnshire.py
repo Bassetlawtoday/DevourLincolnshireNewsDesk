@@ -27,6 +27,7 @@ LINCOLNSHIRE_PLACES = (
     "Skellingthorpe", "Welton", "Nettleham", "Dunholme", "Cherry Willingham",
     "Washingborough", "Bardney", "Sutton Bridge", "Gedney", "Moulton",
     "Crowle", "Epworth", "Kirton in Lindsey", "Barrow upon Humber", "New Holland",
+    "Peaks Lane", "Waltham", "Winterton", "Immingham East", "Immingham West",
 )
 
 
@@ -64,11 +65,14 @@ def story_matches_lincolnshire(story) -> LincolnshireMatch:
             getattr(story, "title", ""),
             getattr(story, "summary", ""),
             getattr(story, "body", ""),
+            getattr(story, "source", ""),
             getattr(story, "location", ""),
             " ".join(getattr(story, "tags", ()) or ()),
             extras.get("location", ""),
             extras.get("area", ""),
             extras.get("matched_place", ""),
             extras.get("source_description", ""),
+            extras.get("source_organisation", ""),
+            extras.get("organisation", ""),
         )
     )

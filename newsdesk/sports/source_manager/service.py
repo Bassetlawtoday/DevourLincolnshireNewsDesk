@@ -297,7 +297,7 @@ class SourceManagerService:
         result["organisation"] = str(result.get("organisation") or result["name"]).strip()
         result["listing_url"] = str(result.get("listing_url") or "").strip()
         result["sport"] = str(result.get("sport") or "Football").strip()
-        result["location"] = str(result.get("location") or "Bassetlaw").strip()
+        result["location"] = str(result.get("location") or "Lincolnshire").strip()
         result["max_stories"] = int(result.get("max_stories", 20))
         result["enabled"] = bool(result.get("enabled", True))
         for key in ("listing_warmup_url", "content_api_url", "content_api_item_path"):
