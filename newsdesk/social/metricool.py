@@ -7,9 +7,10 @@ import hashlib
 import json
 import mimetypes
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 
@@ -38,7 +39,16 @@ class MetricoolClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 text = response.read().decode("utf-8", errors="replace")
-                return json.loads(text) if text.strip() else {}
+                if not text.strip():
+                    return {}
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    # Metricool's image normalisation action can return the
+                    # imported media URL as an unquoted plain-text response.
+                    # Preserve it for normalize_image() instead of treating a
+                    # successful import as malformed JSON.
+                    return text.strip()
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:500]
             raise MetricoolError(f"Metricool returned HTTP {exc.code}: {detail or exc.reason}") from exc
@@ -74,12 +84,13 @@ class MetricoolClient:
             raise
         except Exception as exc:
             raise MetricoolImageError(str(exc)) from exc
-        if isinstance(response, str): value = response
+        if isinstance(response, str): value = response.strip()
         elif isinstance(response, dict):
             data = response.get("data") if isinstance(response.get("data"), dict) else {}
             value = str(response.get("url") or response.get("mediaUrl") or data.get("url") or "")
         else: value = ""
-        if not value: raise MetricoolImageError("Metricool could not validate the public image URL.")
+        if not value.casefold().startswith(("https://", "http://")):
+            raise MetricoolImageError("Metricool could not validate the public image URL.")
         return value
 
     @staticmethod
@@ -139,6 +150,45 @@ class MetricoolClient:
         except Exception as exc:
             raise MetricoolImageError(str(exc)) from exc
 
+    def import_source_image(self, image_url: str) -> str:
+        """Import a source image, uploading it when URL normalisation is refused."""
+
+        try:
+            return self.normalize_image(image_url)
+        except MetricoolImageError as normalise_error:
+            request = Request(
+                image_url.strip(),
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; DevourLincolnshireNewsDesk/1.0)",
+                    "Accept": "image/jpeg,image/png,image/*;q=0.8",
+                },
+            )
+            try:
+                with urlopen(request, timeout=self.timeout) as response:
+                    payload = response.read(30 * 1024 * 1024 + 1)
+                    content_type = str(response.headers.get_content_type() or "").casefold()
+            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                raise MetricoolImageError(
+                    f"Metricool rejected the source image URL and NewsDesk could not download the image: {exc}"
+                ) from exc
+            if not payload:
+                raise MetricoolImageError("The source website returned an empty image.")
+            if len(payload) > 30 * 1024 * 1024:
+                raise MetricoolImageError("The source image exceeds Facebook's 30 MB limit.")
+            suffix = Path(urlsplit(image_url).path).suffix.casefold()
+            if content_type == "image/jpeg" or suffix in {".jpg", ".jpeg"}:
+                suffix = ".jpg"
+            elif content_type == "image/png" or suffix == ".png":
+                suffix = ".png"
+            else:
+                raise MetricoolImageError(
+                    "Metricool rejected the source image URL and the downloaded file is not a JPEG or PNG."
+                ) from normalise_error
+            with TemporaryDirectory(prefix="newsdesk-metricool-") as folder:
+                temporary_image = Path(folder) / f"source{suffix}"
+                temporary_image.write_bytes(payload)
+                return self.upload_local_image(str(temporary_image))
+
     def create_draft(self, *, text: str, providers: list[str], publication_datetime: str, timezone: str, image_url: str = "", image_path: str = ""):
         if not self.token or not self.user_id or not self.blog_id:
             raise MetricoolError("API token, user ID and brand/blog ID are required.")
@@ -154,7 +204,7 @@ class MetricoolClient:
         if image_path:
             body["media"] = [self.upload_local_image(image_path)]
         elif image_url:
-            body["media"] = [self.normalize_image(image_url)]
+            body["media"] = [self.import_source_image(image_url)]
         return self._request("POST", "/v2/scheduler/posts", query={"blogId": self.blog_id, "userId": self.user_id}, body=body)
 
     @staticmethod

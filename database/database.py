@@ -5,14 +5,39 @@ from pathlib import Path
 DATABASE = Path(__file__).resolve().parent.parent / "data" / "newsdesk.db"
 
 
+PLANNING_COLUMNS = (
+    "reference",
+    "alt_reference",
+    "planning_authority",
+    "planning_source_key",
+    "address",
+    "proposal",
+    "status",
+    "decision",
+    "received_date",
+    "validated_date",
+    "decision_date",
+    "appeal_status",
+    "appeal_decision",
+    "category",
+    "score",
+    "notes",
+    "url",
+    "imported",
+)
+
+
 REQUIRED_COLUMNS = {
     "alt_reference": "TEXT",
+    "planning_authority": "TEXT",
+    "planning_source_key": "TEXT",
     "status": "TEXT",
     "received_date": "TEXT",
     "validated_date": "TEXT",
     "appeal_status": "TEXT",
     "appeal_decision": "TEXT",
     "notes": "TEXT",
+    "url": "TEXT",
     "imported": "TIMESTAMP",
 }
 
@@ -23,17 +48,14 @@ def get_connection():
     return conn
 
 
-def create_database():
-    DATABASE.parent.mkdir(parents=True, exist_ok=True)
-
-    conn = get_connection()
-    cur = conn.cursor()
-
+def _create_planning_table(cur):
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS planning(
-            reference TEXT PRIMARY KEY,
+            reference TEXT NOT NULL,
             alt_reference TEXT,
+            planning_authority TEXT,
+            planning_source_key TEXT NOT NULL DEFAULT 'legacy_bassetlaw',
             address TEXT,
             proposal TEXT,
             status TEXT,
@@ -46,10 +68,21 @@ def create_database():
             category TEXT,
             score INTEGER,
             notes TEXT,
-            imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            url TEXT,
+            imported TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(planning_source_key, reference)
         )
         """
     )
+
+
+def create_database():
+    DATABASE.parent.mkdir(parents=True, exist_ok=True)
+
+    conn = get_connection()
+    cur = conn.cursor()
+
+    _create_planning_table(cur)
 
     cur.execute("PRAGMA table_info(planning)")
     existing_columns = {
@@ -62,6 +95,33 @@ def create_database():
                 f"ALTER TABLE planning "
                 f"ADD COLUMN {column_name} {column_type}"
             )
+
+    cur.execute("PRAGMA table_info(planning)")
+    table_info = cur.fetchall()
+    primary_key_columns = [
+        row["name"]
+        for row in sorted(table_info, key=lambda row: row["pk"])
+        if row["pk"]
+    ]
+
+    if primary_key_columns == ["reference"]:
+        legacy_columns = {row["name"] for row in table_info}
+        cur.execute("ALTER TABLE planning RENAME TO planning_legacy")
+        _create_planning_table(cur)
+        column_list = ", ".join(PLANNING_COLUMNS)
+        selected_columns = ", ".join(
+            "COALESCE(NULLIF(planning_source_key, ''), 'legacy_bassetlaw')"
+            if column == "planning_source_key"
+            else column if column in legacy_columns
+            else "CURRENT_TIMESTAMP" if column == "imported"
+            else f"NULL AS {column}"
+            for column in PLANNING_COLUMNS
+        )
+        cur.execute(
+            f"INSERT OR REPLACE INTO planning ({column_list}) "
+            f"SELECT {selected_columns} FROM planning_legacy"
+        )
+        cur.execute("DROP TABLE planning_legacy")
 
     conn.commit()
     conn.close()
@@ -76,6 +136,8 @@ def save_planning_application(app):
         INSERT OR REPLACE INTO planning(
             reference,
             alt_reference,
+            planning_authority,
+            planning_source_key,
             address,
             proposal,
             status,
@@ -87,15 +149,18 @@ def save_planning_application(app):
             appeal_decision,
             category,
             score,
-            notes
+            notes,
+            url
         )
         VALUES(
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
         (
             app.reference,
             app.alt_reference,
+            getattr(app, "planning_authority", ""),
+            getattr(app, "planning_source_key", "") or "legacy_bassetlaw",
             app.address,
             app.proposal,
             app.status,
@@ -108,6 +173,7 @@ def save_planning_application(app):
             app.category,
             app.score,
             app.notes,
+            getattr(app, "url", ""),
         ),
     )
 

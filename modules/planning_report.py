@@ -7,9 +7,12 @@ from PIL import Image
 from editorial.story_window import open_story_desk
 from newsdesk.header import NewsDeskHeader
 from newsdesk.newsletter.selection import planning_story
-from newsdesk.social.selection import add_story_to_social_desk
-from modules.sport_source_manager import SourceManagerWindow
-from newsdesk.ui_support import focus_existing_window, maximize_window
+from newsdesk.social.selection import add_story_to_social_desk, social_workflow_status
+from modules.planning_source_manager import SourceManagerWindow
+from newsdesk.ui_support import (
+    focus_existing_window,
+    present_window_foreground,
+)
 from newsdesk.theme import HEADER_HEIGHT
 
 APP_BG = "#0f172a"
@@ -33,8 +36,9 @@ ENTRY_BG = "#111827"
 class PlanningReportWindow:
     """Displays the Version 2.2 Stage 3 planning editorial dashboard."""
 
-    def __init__(self, parent, report_data):
+    def __init__(self, parent, report_data, refresh_command=None):
         self.parent = parent
+        self.refresh_command = refresh_command
         self.report_data = report_data or {}
         self.all_applications = self.report_data.get("all_applications", [])
         self.filtered_applications = list(self.all_applications)
@@ -47,21 +51,32 @@ class PlanningReportWindow:
         self.window.configure(fg_color=APP_BG)
 
         self.window.transient(parent)
-        self.window.lift()
-        self.window.focus_force()
 
         self.search_var = ctk.StringVar()
         self.register_count_label = None
         self.register_textbox = None
         self.copy_status_label = None
         self.source_manager_window = None
+        self.refresh_worker = None
+        self.refresh_status_label = None
+        self.refresh_current_label = None
+        self.refresh_elapsed_label = None
+        self.refresh_progress = None
+        self.refresh_log = None
 
         self.build()
         self.window.protocol("WM_DELETE_WINDOW", self._close_window)
-        self.window.after_idle(lambda: maximize_window(self.window))
+        self.window.after_idle(
+            lambda: present_window_foreground(
+                self.window,
+                temporary_topmost=True,
+                maximized=True,
+            )
+        )
 
     def build(self):
         self._build_header()
+        self._build_refresh_monitor()
 
         content = ctk.CTkScrollableFrame(
             self.window,
@@ -74,6 +89,7 @@ class PlanningReportWindow:
 
         self._build_story_of_week(content)
         self._build_summary(content)
+        self._build_source_status(content)
         self._build_intelligence_grid(content)
         self._build_watchlist(content)
         self._build_top_stories(content)
@@ -131,23 +147,121 @@ class PlanningReportWindow:
         self.copy_status_label = None
         self.build()
 
-        self.window.deiconify()
-        self.window.lift()
-        self.window.focus_force()
+        present_window_foreground(
+            self.window,
+            temporary_topmost=True,
+            maximized=True,
+        )
 
     def _build_header(self):
+        secondary_actions = []
+        if callable(self.refresh_command):
+            secondary_actions.append(
+                ("REFRESH PLANNING DATA", self._open_planning_downloader)
+            )
+        secondary_actions.extend(
+            (
+                ("MANAGE SOURCES", self._open_source_manager),
+                ("SOCIAL DESK", self._open_social_desk),
+            )
+        )
         self.header = NewsDeskHeader(
             self.window,
             module_title="Planning Intelligence",
             subtitle="Collect  •  Prioritise  •  Review  •  Publish",
             close_command=self._close_window,
-            secondary_actions=(
-                ("MANAGE SOURCES", self._open_source_manager),
-                ("SOCIAL DESK", self._open_social_desk),
-            ),
+            secondary_actions=tuple(secondary_actions),
             height=HEADER_HEIGHT,
         )
         self.header.pack(fill="x")
+
+    def _open_planning_downloader(self):
+        """Start collection and keep progress inside the briefing."""
+        if not callable(self.refresh_command):
+            return
+        try:
+            self.refresh_worker = self.refresh_command(self)
+            self._poll_refresh_worker()
+            return self.refresh_worker
+        except Exception:
+            raise
+
+    def _build_refresh_monitor(self):
+        source_rows = list(self.report_data.get("planning_sources") or [])
+        has_saved_briefing = bool(self.all_applications or source_rows)
+        current = int(self.report_data.get("planning_sources_current", 0) or 0)
+        retained = int(self.report_data.get("planning_sources_retained", 0) or 0)
+        failed = int(self.report_data.get("planning_sources_failed", 0) or 0)
+        if has_saved_briefing:
+            initial_status = (
+                "Planning refresh: Complete"
+                if not retained and not failed
+                else "Planning refresh: Complete with source warnings"
+            )
+            initial_current = (
+                f"Latest saved briefing: {current} current"
+                f" • {retained} retained • {failed} unavailable"
+            )
+            initial_log = (
+                "Latest completed Planning briefing loaded.\n"
+                "Click REFRESH PLANNING DATA to collect new weekly lists.\n"
+            )
+        else:
+            initial_status = "Planning refresh: Ready"
+            initial_current = "Current: Waiting"
+            initial_log = "Click REFRESH PLANNING DATA to collect the latest weekly lists.\n"
+        panel = ctk.CTkFrame(
+            self.window,
+            fg_color=PANEL_BG,
+            corner_radius=10,
+            border_width=1,
+            border_color=BORDER,
+        )
+        panel.pack(fill="x", padx=18, pady=(8, 0))
+        row = ctk.CTkFrame(panel, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=(10, 5))
+        self.refresh_status_label = ctk.CTkLabel(
+            row,
+            text=initial_status,
+            font=("Arial", 13, "bold"),
+            text_color="#22c55e" if has_saved_briefing and not failed else TEXT,
+        )
+        self.refresh_status_label.pack(side="left")
+        self.refresh_elapsed_label = ctk.CTkLabel(
+            row, text="Elapsed: 00:00", text_color=MUTED_TEXT
+        )
+        self.refresh_elapsed_label.pack(side="right")
+        self.refresh_current_label = ctk.CTkLabel(
+            panel, text=initial_current, anchor="w", text_color="#cbd5e1"
+        )
+        self.refresh_current_label.pack(fill="x", padx=14)
+        self.refresh_progress = ctk.CTkProgressBar(panel)
+        self.refresh_progress.pack(fill="x", padx=14, pady=(6, 8))
+        self.refresh_progress.set(1 if has_saved_briefing else 0)
+        self.refresh_log = ctk.CTkTextbox(panel, height=90)
+        self.refresh_log.pack(fill="x", padx=14, pady=(0, 10))
+        self.refresh_log.insert("end", initial_log)
+        self.refresh_log.configure(state="disabled")
+
+    def _poll_refresh_worker(self):
+        worker = self.refresh_worker
+        if worker is None:
+            return
+        try:
+            self.refresh_status_label.configure(text=worker.status.cget("text"))
+            self.refresh_current_label.configure(text=worker.current_item.cget("text"))
+            self.refresh_elapsed_label.configure(text=worker.elapsed.cget("text"))
+            self.refresh_progress.set(float(worker.progress.get()))
+            log_text = worker.log.get("1.0", "end").strip()
+            self.refresh_log.configure(state="normal")
+            self.refresh_log.delete("1.0", "end")
+            self.refresh_log.insert("end", log_text)
+            self.refresh_log.see("end")
+            self.refresh_log.configure(state="disabled")
+        except Exception:
+            return
+        if worker.running:
+            self.window.after(500, self._poll_refresh_worker)
 
     def _open_source_manager(self):
         if focus_existing_window(self.source_manager_window):
@@ -204,6 +318,18 @@ class PlanningReportWindow:
             "ARCHIVE": "#68747d",
         }
         return colours.get(priority, PRIMARY)
+
+    def _social_workflow_badge(self, parent, application):
+        status = social_workflow_status(planning_story(application))
+        if not status:
+            return
+        ctk.CTkLabel(
+            parent,
+            text=status,
+            font=("Arial", 11, "bold"),
+            text_color="#22c55e" if status == "SENT TO METRICOOL" else "#60a5fa",
+            anchor="w",
+        ).pack(anchor="w", padx=18, pady=(0, 5))
 
     def _tag_colour(self, tag):
         colours = {
@@ -300,6 +426,8 @@ class PlanningReportWindow:
             justify="left",
             anchor="w",
         ).pack(fill="x", padx=18, pady=(0, 9))
+
+        self._social_workflow_badge(card, story)
 
         self._build_tags(card, story.get("tags", []), padx=18)
 
@@ -417,6 +545,43 @@ class PlanningReportWindow:
                 text_color=MUTED_TEXT,
             ).pack(pady=(0, 12))
 
+        authority_rows = self.report_data.get("authority_breakdown", [])
+        if authority_rows:
+            ctk.CTkLabel(
+                panel,
+                text="Authority Activity",
+                font=("Arial", 16, "bold"),
+                text_color=TEXT,
+                anchor="w",
+            ).pack(fill="x", padx=20, pady=(2, 8))
+            authority_grid = ctk.CTkFrame(panel, fg_color="transparent")
+            authority_grid.pack(fill="x", padx=15, pady=(0, 18))
+            authority_grid.grid_columnconfigure((0, 1, 2), weight=1, uniform="authority")
+            for index, row_data in enumerate(authority_rows):
+                row, column = divmod(index, 3)
+                item = ctk.CTkFrame(
+                    authority_grid,
+                    fg_color=CARD_BG,
+                    corner_radius=8,
+                    border_width=1,
+                    border_color=BORDER,
+                )
+                item.grid(row=row, column=column, sticky="nsew", padx=5, pady=4)
+                ctk.CTkLabel(
+                    item,
+                    text=str(row_data.get("count", 0)),
+                    font=("Arial", 19, "bold"),
+                    text_color=PRIMARY,
+                ).pack(side="left", padx=(12, 9), pady=9)
+                ctk.CTkLabel(
+                    item,
+                    text=str(row_data.get("name", "Planning authority")),
+                    font=("Arial", 12, "bold"),
+                    text_color=TEXT,
+                    anchor="w",
+                    wraplength=280,
+                ).pack(side="left", fill="x", expand=True, padx=(0, 10), pady=9)
+
     def _build_intelligence_grid(self, parent):
         grid = ctk.CTkFrame(parent, fg_color="transparent")
         grid.pack(fill="x", pady=(0, 16))
@@ -452,6 +617,67 @@ class PlanningReportWindow:
             self.report_data.get("area_breakdown", []),
             8,
         )
+        unavailable = int(self.report_data.get("unavailable_area_count", 0) or 0)
+        if unavailable:
+            ctk.CTkLabel(
+                areas,
+                text=f"Area unavailable for {unavailable} applications (excluded from ranking)",
+                font=("Arial", 11),
+                text_color=MUTED_TEXT,
+                anchor="w",
+            ).pack(fill="x", padx=18, pady=(0, 14))
+
+    def _build_source_status(self, parent):
+        rows = self.report_data.get("planning_sources", [])
+        if not rows:
+            return
+        current = int(self.report_data.get("planning_sources_current", 0) or 0)
+        retained = int(self.report_data.get("planning_sources_retained", 0) or 0)
+        failed = int(self.report_data.get("planning_sources_failed", 0) or 0)
+        panel = self._panel(
+            parent,
+            "Source Refresh Status",
+            f"{current} current  •  {retained} retained from an earlier refresh  •  {failed} unavailable",
+        )
+        grid = ctk.CTkFrame(panel, fg_color="transparent")
+        grid.pack(fill="x", padx=15, pady=(0, 18))
+        grid.grid_columnconfigure((0, 1, 2), weight=1, uniform="source_status")
+        colours = {
+            "Current": "#22c55e",
+            "Empty": "#60a5fa",
+            "Retained": "#f59e0b",
+            "Failed": "#ef4444",
+        }
+        for index, source in enumerate(rows):
+            row, column = divmod(index, 3)
+            item = ctk.CTkFrame(
+                grid,
+                fg_color=CARD_BG,
+                corner_radius=8,
+                border_width=1,
+                border_color=BORDER,
+            )
+            item.grid(row=row, column=column, sticky="nsew", padx=5, pady=4)
+            status = str(source.get("status") or "Failed")
+            ctk.CTkLabel(
+                item,
+                text=status.upper(),
+                font=("Arial", 11, "bold"),
+                text_color=colours.get(status, MUTED_TEXT),
+                width=72,
+            ).pack(side="left", padx=(10, 6), pady=9)
+            ctk.CTkLabel(
+                item,
+                text=(
+                    f"{source.get('name', 'Planning source')}\n"
+                    f"{int(source.get('application_count', 0) or 0)} applications"
+                ),
+                font=("Arial", 11, "bold"),
+                text_color=TEXT,
+                anchor="w",
+                justify="left",
+                wraplength=270,
+            ).pack(side="left", fill="x", expand=True, padx=(0, 10), pady=8)
 
     def _build_ranked_breakdown(self, parent, title, rows, limit):
         ctk.CTkLabel(
@@ -741,6 +967,8 @@ class PlanningReportWindow:
             wraplength=1020,
         ).pack(fill="x", padx=15, pady=(0, 8))
 
+        self._social_workflow_badge(card, story)
+
         self._build_tags(card, story.get("tags", []), padx=15)
 
         reason = next(
@@ -970,14 +1198,15 @@ class PlanningReportWindow:
         )
         style.map("Planning.Treeview", background=[("selected", ACTION_BLUE)])
         self.register_tree = ttk.Treeview(
-            table_frame, columns=("reference", "area", "proposal"),
+            table_frame, columns=("reference", "authority", "area", "proposal"),
             show="headings", style="Planning.Treeview",
             selectmode="browse", height=14,
         )
         for key, label, width in (
-            ("reference", "REFERENCE", 170),
-            ("area", "AREA", 190),
-            ("proposal", "PROPOSAL", 840),
+            ("reference", "REFERENCE", 150),
+            ("authority", "AUTHORITY", 230),
+            ("area", "AREA", 170),
+            ("proposal", "PROPOSAL", 650),
         ):
             self.register_tree.heading(key, text=label)
             self.register_tree.column(
@@ -1020,6 +1249,7 @@ class PlanningReportWindow:
             application.get("address"),
             application.get("area"),
             application.get("reference"),
+            application.get("planning_authority"),
             application.get("category"),
             application.get("status"),
             application.get("decision"),
@@ -1055,7 +1285,12 @@ class PlanningReportWindow:
             values = self._application_values(application)
             self.register_tree.insert(
                 "", "end", iid=str(index),
-                values=(values["reference"], values["area"], values["proposal"]),
+                values=(
+                    values["reference"],
+                    values["planning_authority"],
+                    values["area"],
+                    values["proposal"],
+                ),
             )
 
     def _select_register_story(self):
@@ -1114,6 +1349,11 @@ class PlanningReportWindow:
             or "No reference"
         )
 
+        planning_authority = (
+            application.get("planning_authority")
+            or "Planning authority unavailable"
+        )
+
         category = (
             application.get("category")
             or "Uncategorised"
@@ -1130,6 +1370,7 @@ class PlanningReportWindow:
             "address": address,
             "area": area,
             "reference": reference,
+            "planning_authority": planning_authority,
             "category": category,
             "decision": decision,
         }
@@ -1139,7 +1380,7 @@ class PlanningReportWindow:
             return "No planning applications match the current search."
 
         lines = [
-            "BASSETLAW PLANNING REGISTER",
+            "LINCOLNSHIRE PLANNING REGISTER",
             "",
         ]
 
@@ -1158,6 +1399,7 @@ class PlanningReportWindow:
                     f"Location: {values['address']}",
                     f"Area: {values['area']}",
                     f"Reference: {values['reference']}",
+                    f"Planning authority: {values['planning_authority']}",
                     f"Category: {values['category']}",
                     f"Decision/Status: {values['decision']}",
                     "",
@@ -1175,7 +1417,7 @@ class PlanningReportWindow:
         sorted_applications = self._sorted_applications(applications)
 
         lines = [
-            "# Planning applications across Bassetlaw",
+            "# Planning applications across Lincolnshire",
             "",
             (
                 "Here is the latest full list of planning applications "
@@ -1207,6 +1449,8 @@ class PlanningReportWindow:
                     "",
                     f"**Reference:** {values['reference']}",
                     "",
+                    f"**Planning authority:** {values['planning_authority']}",
+                    "",
                     f"**Category:** {values['category']}",
                     "",
                     f"**Decision/Status:** {values['decision']}",
@@ -1225,7 +1469,7 @@ class PlanningReportWindow:
         sorted_applications = self._sorted_applications(applications)
 
         lines = [
-            "🏛 PLANNING APPLICATIONS ACROSS BASSETLAW",
+            "🏛 PLANNING APPLICATIONS ACROSS LINCOLNSHIRE",
             "",
             (
                 f"Here is the latest list of "
@@ -1246,6 +1490,7 @@ class PlanningReportWindow:
                     f"{position}. {values['proposal']}",
                     f"📍 {values['address']}",
                     f"📄 {values['reference']}",
+                    f"🏛 {values['planning_authority']}",
                     f"🏷️ {values['category']}",
                     f"📌 {values['decision']}",
                     "",
@@ -1312,5 +1557,9 @@ class PlanningReportWindow:
             ).pack(side="left", padx=(0, 6))
 
 
-def open_planning_report(parent, report_data):
-    return PlanningReportWindow(parent, report_data)
+def open_planning_report(parent, report_data, refresh_command=None):
+    return PlanningReportWindow(
+        parent,
+        report_data,
+        refresh_command=refresh_command,
+    )

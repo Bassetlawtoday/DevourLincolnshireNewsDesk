@@ -695,7 +695,9 @@ class Dashboard(ctk.CTkFrame):
             except Exception:
                 pass
             self.planning_results_window = open_planning_report(
-                self.master, stored.payload["report_data"]
+                self.master,
+                stored.payload["report_data"],
+                refresh_command=self._refresh_planning_in_report,
             )
             return
         from tkinter import messagebox
@@ -705,21 +707,51 @@ class Dashboard(ctk.CTkFrame):
             parent=self.master,
         ):
             return
+        self._open_planning_downloader()
+
+    def _open_planning_downloader(self):
+        """Open or foreground only the Planning collection window."""
         existing = self.planning_downloader_window
         try:
             if existing and existing.window.winfo_exists():
-                existing.window.deiconify()
-                existing.window.lift()
-                existing.window.focus_force()
-                return
+                existing.show_downloader()
+                return existing
         except Exception:
             self.planning_downloader_window = None
-        self.planning_downloader_window = PlanningWindow()
+        self.planning_downloader_window = PlanningWindow(self.master)
         self.planning_downloader_window.dashboard_result_callback = (
             lambda payload: self.master.after(
                 0, lambda: self._module_payload_updated("planning", payload)
             )
         )
+        stored = self.result_repository.get_result("planning")
+        if stored and stored.payload.get("report_data"):
+            self.planning_downloader_window.load_results(
+                stored.payload["report_data"]
+            )
+        return self.planning_downloader_window
+
+    def _refresh_planning_in_report(self, report_window):
+        """Start Planning-only collection with progress shown in the report."""
+        existing = self.planning_downloader_window
+        try:
+            if not (existing and existing.window.winfo_exists()):
+                existing = None
+        except Exception:
+            existing = None
+        if existing is None:
+            existing = PlanningWindow(
+                self.master,
+                visible=False,
+                auto_open_report=False,
+            )
+            self.planning_downloader_window = existing
+            existing.dashboard_result_callback = (
+                lambda payload: self.master.after(
+                    0, lambda: self._module_payload_updated("planning", payload)
+                )
+            )
+        return existing.begin_background_refresh(report_window)
 
     def _planning_open_target(self):
         stored = self.result_repository.get_result("planning")

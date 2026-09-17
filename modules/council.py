@@ -411,6 +411,15 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
             self.detail_content, text=story.title, font=("Arial", 23, "bold"),
             text_color=TEXT_PRIMARY, justify="left", anchor="w", wraplength=760,
         ).pack(fill="x", padx=22, pady=(20, 10))
+        from newsdesk.social.selection import social_workflow_status
+        workflow_status = social_workflow_status(story)
+        if workflow_status:
+            ctk.CTkLabel(
+                self.detail_content, text=workflow_status,
+                font=("Arial", 11, "bold"),
+                text_color="#22c55e" if workflow_status == "SENT TO METRICOOL" else "#60a5fa",
+                anchor="w",
+            ).pack(fill="x", padx=22, pady=(0, 7))
         locations = ", ".join(story.extras.get("matched_locations") or [])
         metadata = "  |  ".join(
             value for value in (
@@ -532,9 +541,11 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
             )
             return
         if action_name == "ADD TO SOCIALS":
-            add_story_to_social_desk(
+            draft = add_story_to_social_desk(
                 self, self.selected_story, module_key="council",
             )
+            if draft is not None:
+                self._show_story(self.selected_story)
             return
         if action_name == "OPEN SOURCE":
             if self.selected_story.url:

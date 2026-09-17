@@ -9,6 +9,19 @@ from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsS
 from newsdesk.social.text import clean_social_text, repair_ldrs_draft
 
 
+def _show_sent_status(parent) -> None:
+    """Show a successful hand-off in each module's existing status control."""
+    for attribute in ("status_label", "status", "editor_status"):
+        widget = getattr(parent, attribute, None)
+        if widget is None or not hasattr(widget, "configure"):
+            continue
+        try:
+            widget.configure(text="Status: Sent to Social Desk")
+            return
+        except Exception:
+            continue
+
+
 def _rights_status(image_url: str, credit: str, module_key: str) -> str:
     if not image_url:
         return "no image"
@@ -21,6 +34,23 @@ def _rights_status(image_url: str, credit: str, module_key: str) -> str:
 def _real_image(value: str) -> str:
     image_url = str(value or "").strip()
     return "" if "ldrs.org.uk/assets/images/placeholder.png" in image_url.casefold() else image_url
+
+
+def social_workflow_status(story) -> str:
+    """Return the persisted Social Desk stage for a newsroom story."""
+    source_url = str(getattr(story, "url", "") or "").strip()
+    if not source_url:
+        return ""
+    store = SocialDraftStore()
+    draft = store.find_by_source_url(store.load(), source_url)
+    if draft is None:
+        return ""
+    delivered = bool(
+        str(draft.metricool_id or "").strip()
+        or str(draft.status or "").strip().casefold()
+        == "sent to metricool as draft"
+    )
+    return "SENT TO METRICOOL" if delivered else "SENT TO SOCIAL DESK"
 
 
 def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft | None:
@@ -85,6 +115,7 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
     if not existed:
         drafts.append(draft)
     store.save(drafts)
+    _show_sent_status(parent)
     messagebox.showinfo(
         "Added to Socials",
         "The existing social draft was updated without creating a duplicate."
@@ -94,4 +125,4 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
     return draft
 
 
-__all__ = ["add_story_to_social_desk"]
+__all__ = ["add_story_to_social_desk", "social_workflow_status"]

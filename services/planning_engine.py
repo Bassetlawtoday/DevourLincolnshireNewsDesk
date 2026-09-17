@@ -1,5 +1,7 @@
 import re
+import time
 from collections import Counter
+from datetime import datetime, timezone
 
 from editorial.editorial_engine import analyse_application
 from editorial.priority_engine import score_story
@@ -9,6 +11,15 @@ from editorial.scoring import (
 
 
 from services.planning_scraper import PlanningScraper
+from services.planning_additional_sources import collect_additional_source
+from services.planning_sources import enabled_additional_sources, enabled_idox_sources
+from services.planning_source_cache import PlanningSourceCache
+from services.planning_reporting import (
+    area_breakdown as _area_breakdown,
+    authority_breakdown as _authority_breakdown,
+    resolved_area as _resolved_area,
+    unavailable_area_count as _unavailable_area_count,
+)
 
 from database.database import (
     total_applications,
@@ -28,36 +39,9 @@ def _normalise_category(value):
     return category if category else "Uncategorised"
 
 
-def _extract_area(address):
-    """Resolve an application's area through the central editorial engine."""
-    address_text = _clean_text(address)
-
-    if not address_text:
-        return "Unknown area"
-
-    priority = score_story(
-        module="planning",
-        title="",
-        summary=address_text,
-    )
-
-    if priority.matched_place:
-        return priority.matched_place
-
-    parts = [part.strip() for part in address_text.split(",") if part.strip()]
-    if len(parts) > 1:
-        candidate = parts[-1]
-        candidate = re.sub(
-            r"\b(Nottinghamshire|Notts)\b",
-            "",
-            candidate,
-            flags=re.I,
-        )
-        candidate = _clean_text(candidate)
-        if candidate:
-            return candidate
-
-    return "Other / not identified"
+def _error_text(error):
+    message = _clean_text(str(error))
+    return message or f"{type(error).__name__}: no diagnostic message was returned"
 
 
 
@@ -195,8 +179,17 @@ def _application_to_dict(app):
     return {
         **analysis,
         "reference": _clean_text(app.reference),
+        "planning_authority": _clean_text(
+            getattr(app, "planning_authority", "")
+        ),
+        "planning_source_key": _clean_text(
+            getattr(app, "planning_source_key", "")
+        ),
         "address": _clean_text(app.address),
-        "area": priority.matched_place or _extract_area(app.address),
+        "locality": _clean_text(getattr(app, "locality", "")),
+        "parish": _clean_text(getattr(app, "parish", "")),
+        "ward": _clean_text(getattr(app, "ward", "")),
+        "area": _resolved_area(app, priority.matched_place),
         "proposal": _clean_text(app.proposal),
         "proposal_summary": _proposal_summary(app.proposal),
         "status": _clean_text(app.status),
@@ -227,17 +220,6 @@ def _category_breakdown(applications):
     return [
         {"name": name, "count": count}
         for name, count in counts.most_common()
-    ]
-
-
-def _area_breakdown(applications):
-    counts = Counter(
-        _extract_area(app.address)
-        for app in applications
-    )
-    return [
-        {"name": name, "count": count}
-        for name, count in counts.most_common(8)
     ]
 
 
@@ -370,6 +352,9 @@ def _download_list(
     progress_span = progress_end - progress_start
 
     for counter, link in enumerate(links, start=1):
+        if counter > 1 and (counter - 1) % 10 == 0:
+            ui.write_log("Refreshing the Planning browser checkpoint...")
+            scraper.restart_browser()
         ui.set_status(f"{display_name} {counter}/{total}")
         ui.set_current_application(
             f"{display_name} application {counter} of {total}"
@@ -386,7 +371,19 @@ def _download_list(
             f"Downloading {list_type} application {counter} of {total}"
         )
 
-        app = scraper.scrape_application(link)
+        app = None
+        for attempt in range(2):
+            try:
+                app = scraper.scrape_application(link)
+                break
+            except Exception as error:
+                if attempt:
+                    raise
+                ui.write_log(
+                    "Planning browser interrupted; restarting and retrying "
+                    f"application {counter}..."
+                )
+                scraper.restart_browser()
 
         if app:
             scraper.applications.append(app)
@@ -402,6 +399,31 @@ def _download_list(
     return total, downloaded
 
 
+def _save_source_cache(cache, source, applications, ui):
+    try:
+        cache.save(source.key, applications, datetime.now(timezone.utc))
+    except Exception as error:
+        ui.write_log(
+            f"{source.name}: results collected, but its recovery cache could not be updated: "
+            f"{_error_text(error)[:160]}"
+        )
+
+
+def _retain_cached_source(cache, source, scraper, result, ui):
+    cached = cache.load(source.key)
+    if not cached:
+        result["status"] = "Failed"
+        result["application_count"] = 0
+        return False
+    scraper.applications.extend(cached)
+    result["status"] = "Retained"
+    result["application_count"] = len(cached)
+    ui.write_log(
+        f"{source.name}: retained {len(cached)} applications from its last successful refresh."
+    )
+    return True
+
+
 def run_weekly_download(ui):
     ui.write_log("")
     ui.write_log("========================================")
@@ -411,26 +433,193 @@ def run_weekly_download(ui):
     ui.set_progress(0.02, "Connecting")
     ui.set_status("Starting planning download")
 
-    scraper = PlanningScraper()
+    idox_sources = enabled_idox_sources()
+    additional_sources = enabled_additional_sources()
+    sources = [*idox_sources, *additional_sources]
+    if not idox_sources:
+        raise RuntimeError("No enabled Lincolnshire Idox planning sources are configured.")
+
+    scraper = PlanningScraper(source=idox_sources[0])
+    source_cache = PlanningSourceCache()
 
     try:
-        decided_found, decided_downloaded = _download_list(
-            ui=ui,
-            scraper=scraper,
-            list_type="decided",
-            wait_for_user=True,
-            progress_start=0.05,
-            progress_end=0.43,
-        )
+        decided_found = 0
+        decided_downloaded = 0
+        validated_found = 0
+        validated_downloaded = 0
+        source_results = []
+        collection_start = 0.05
+        collection_end = 0.86
+        source_span = (collection_end - collection_start) / len(sources)
 
-        validated_found, validated_downloaded = _download_list(
-            ui=ui,
-            scraper=scraper,
-            list_type="validated",
-            wait_for_user=False,
-            progress_start=0.43,
-            progress_end=0.86,
+        for source_index, source in enumerate(idox_sources):
+            if source_index:
+                collected = list(scraper.applications)
+                scraper.close()
+                scraper = PlanningScraper(source=source)
+                scraper.applications = collected
+            else:
+                scraper.set_source(source)
+            source_start = collection_start + (source_span * source_index)
+            source_midpoint = source_start + (source_span * 0.5)
+            source_end = source_start + source_span
+
+            ui.write_log("")
+            ui.write_log(f"Connecting to {source.name}...")
+            ui.set_status(f"Collecting {source.name}")
+            ui.set_current_application(source.authority_label)
+
+            result = {
+                "key": source.key,
+                "name": source.name,
+                "authorities": list(source.authorities),
+                "status": "Current",
+                "error": "",
+                "application_count": 0,
+                "decided_found": 0,
+                "decided_downloaded": 0,
+                "validated_found": 0,
+                "validated_downloaded": 0,
+            }
+
+            source_applications = []
+            for attempt in range(3):
+                applications_before_source = list(scraper.applications)
+                try:
+                    source_decided_found, source_decided_downloaded = _download_list(
+                        ui=ui,
+                        scraper=scraper,
+                        list_type="decided",
+                        wait_for_user=(source_index == 0 and attempt == 0),
+                        progress_start=source_start,
+                        progress_end=source_midpoint,
+                    )
+                    source_validated_found, source_validated_downloaded = _download_list(
+                        ui=ui,
+                        scraper=scraper,
+                        list_type="validated",
+                        wait_for_user=False,
+                        progress_start=source_midpoint,
+                        progress_end=source_end,
+                    )
+                except Exception as error:
+                    scraper.applications = applications_before_source
+                    if attempt < 2:
+                        delay = 5 if attempt == 0 else 15
+                        ui.write_log(
+                            f"{source.name}: collection interrupted; retrying with a fresh "
+                            f"browser in {delay} seconds ({attempt + 2}/3)..."
+                        )
+                        time.sleep(delay)
+                        scraper.close()
+                        scraper = PlanningScraper(source=source)
+                        scraper.applications = applications_before_source
+                        continue
+                    result["error"] = _error_text(error)[:240]
+                    ui.write_log(f"{source.name} failed: {result['error']}")
+                    _retain_cached_source(
+                        source_cache, source, scraper, result, ui
+                    )
+                    break
+                else:
+                    result["decided_found"] = source_decided_found
+                    result["decided_downloaded"] = source_decided_downloaded
+                    result["validated_found"] = source_validated_found
+                    result["validated_downloaded"] = source_validated_downloaded
+                    decided_found += source_decided_found
+                    decided_downloaded += source_decided_downloaded
+                    validated_found += source_validated_found
+                    validated_downloaded += source_validated_downloaded
+                    source_applications = scraper.applications[
+                        len(applications_before_source):
+                    ]
+                    result["application_count"] = len(source_applications)
+                    result["status"] = (
+                        "Current" if source_applications else "Empty"
+                    )
+                    _save_source_cache(
+                        source_cache, source, source_applications, ui
+                    )
+                    break
+
+            source_results.append(result)
+
+        for source_index, source in enumerate(
+            additional_sources, start=len(idox_sources)
+        ):
+            source_start = collection_start + (source_span * source_index)
+            source_end = source_start + source_span
+            ui.write_log("")
+            ui.write_log(f"Connecting to {source.name}...")
+            ui.set_status(f"Collecting {source.name}")
+            ui.set_current_application(source.authority_label)
+            result = {
+                "key": source.key,
+                "name": source.name,
+                "authorities": list(source.authorities),
+                "status": "Current",
+                "error": "",
+                "application_count": 0,
+                "decided_found": 0,
+                "decided_downloaded": 0,
+                "validated_found": 0,
+                "validated_downloaded": 0,
+            }
+            try:
+                if source.platform == "north_lincs_weekly":
+                    ui.write_log(
+                        "North Lincolnshire runs last and may open visible Chrome for verification."
+                    )
+                    ui.write_log(
+                        "If prompted, complete the CAPTCHA within five minutes; collection will then continue automatically."
+                    )
+                    ui.set_status("Waiting up to five minutes for North Lincolnshire verification")
+                applications = collect_additional_source(source) or []
+                scraper.applications.extend(applications)
+                count = len(applications)
+                result["application_count"] = count
+                result["status"] = "Current" if count else "Empty"
+                _save_source_cache(source_cache, source, applications, ui)
+                result["validated_found"] = count
+                result["validated_downloaded"] = count
+                validated_found += count
+                validated_downloaded += count
+                ui.write_log(f"{count} validated applications downloaded.")
+                ui.set_progress(source_end, "Validated Applications")
+                ui.set_list_progress("Validated", count, count)
+            except Exception as error:
+                result["error"] = _error_text(error)[:240]
+                ui.write_log(f"{source.name} failed: {result['error']}")
+                _retain_cached_source(
+                    source_cache, source, scraper, result, ui
+                )
+            source_results.append(result)
+
+        current_sources = sum(
+            1 for result in source_results
+            if result["status"] in {"Current", "Empty"}
         )
+        retained_sources = sum(
+            1 for result in source_results if result["status"] == "Retained"
+        )
+        failed_sources = sum(
+            1 for result in source_results if result["status"] == "Failed"
+        )
+        completed_sources = current_sources + retained_sources
+        if not scraper.applications:
+            raise RuntimeError(
+                "No current or retained Lincolnshire Planning applications were available."
+            )
+        ui.write_log("")
+        ui.write_log(
+            f"Source refresh summary: {current_sources} current, "
+            f"{retained_sources} retained, {failed_sources} failed."
+        )
+        if retained_sources or failed_sources:
+            ui.write_log(
+                "The briefing will be updated with all available results; "
+                "source status labels identify retained or unavailable data."
+            )
 
         ui.set_progress(0.88, "Processing Results")
         ui.set_status("Removing duplicates")
@@ -497,12 +686,21 @@ def run_weekly_download(ui):
             "story_of_week": top_stories[0] if top_stories else None,
             "top_stories": top_stories,
             "all_applications": all_applications,
+            "planning_sources": source_results,
+            "planning_sources_completed": completed_sources,
+            "planning_sources_configured": len(sources),
+            "planning_sources_current": current_sources,
+            "planning_sources_retained": retained_sources,
+            "planning_sources_failed": failed_sources,
             "category_breakdown": _category_breakdown(scraper.applications),
             "area_breakdown": _hotspot_insight(_area_breakdown(scraper.applications)),
+            "unavailable_area_count": _unavailable_area_count(scraper.applications),
+            "authority_breakdown": _authority_breakdown(scraper.applications, sources),
             "watchlist": _watchlist(scraper.applications),
             "editorial_summary": editorial_summary(scraper.applications),
         }
         ui.set_report_data(report_data)
+        ui.source_warning_count = retained_sources + failed_sources
 
         ui.downloaded.configure(
             text=f"Applications Downloaded : {unique_total}"
@@ -519,6 +717,10 @@ def run_weekly_download(ui):
         ui.write_log(f"{duplicates_removed} duplicate applications removed.")
         ui.write_log(f"{unique_total} unique applications processed.")
         ui.write_log(f"{weekly_newsworthy} weekly stories marked as newsworthy.")
+        ui.write_log(
+            f"Planning sources: {current_sources} current, "
+            f"{retained_sources} retained, {failed_sources} failed."
+        )
         ui.write_log(f"{total_db} applications currently stored.")
         ui.write_log("Story of the Week selected.")
         ui.write_log("Editorial priorities calculated.")
@@ -529,8 +731,15 @@ def run_weekly_download(ui):
         ui.write_log("Version 3.1.1 module-aware briefing prepared.")
 
         ui.set_progress(1, "Download Complete")
-        ui.set_status("Complete")
-        ui.set_current_application("Finished")
+        if retained_sources or failed_sources:
+            ui.set_status("Complete with source warnings")
+            ui.set_current_application(
+                f"{current_sources} current, {retained_sources} retained, "
+                f"{failed_sources} failed"
+            )
+        else:
+            ui.set_status("Complete")
+            ui.set_current_application("Finished")
 
         return unique_total
 

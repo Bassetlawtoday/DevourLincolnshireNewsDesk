@@ -319,7 +319,11 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
         self._clear_detail(); ctk.CTkLabel(self.detail,text=text,text_color=TEXT_MUTED,wraplength=460).pack(pady=40)
 
     def _render_detail(self,row):
-        self._clear_detail(); title=str(row["slug"] or row["title"]); ctk.CTkLabel(self.detail,text=title,font=("Arial",23,"bold"),text_color=TEXT_PRIMARY,anchor="w",justify="left",wraplength=560).pack(fill="x",pady=(2,18))
+        self._clear_detail(); title=str(row["slug"] or row["title"]); ctk.CTkLabel(self.detail,text=title,font=("Arial",23,"bold"),text_color=TEXT_PRIMARY,anchor="w",justify="left",wraplength=560).pack(fill="x",pady=(2,8))
+        from newsdesk.social.selection import social_workflow_status
+        workflow_status = social_workflow_status(_story_from_row(row))
+        if workflow_status:
+            ctk.CTkLabel(self.detail,text=workflow_status,font=("Arial",12,"bold"),text_color="#22c55e" if workflow_status == "SENT TO METRICOOL" else "#60a5fa",anchor="w").pack(fill="x",pady=(0,10))
         authorities=", ".join(decode_list(row["authorities_json"])); categories=", ".join(decode_list(row["categories_json"])); fields=(("Created",_display_date(row)),("Author",row["author"]),("Area / authority",authorities),("Categories",categories),("Type",row["content_type"]),("Reviewer",row["reviewer_email"]))
         for label,value in fields:
             if not value: continue
@@ -372,7 +376,16 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
                 if kind=="progress": self.status.configure(text=item[1])
                 elif kind=="done": self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.refresh_database(); self.status.configure(text=f"UPDATE PASSED • {item[1]:,} Lincolnshire stories discovered • {item[2]:,} stored")
                 elif kind=="detail": self._working=False; self.refresh_database(); row=self.store.get(item[1]); self.select(row); self.status.configure(text="Full LDRS story and media downloaded")
-                elif kind=="detail_social": self._working=False; self.refresh_database(); row=self.store.get(item[1]); self.select(row); self.status.configure(text="Full LDRS story downloaded once and staged for socials"); self.after(50,self.add_to_social_desk)
+                elif kind=="detail_social":
+                    self._working=False
+                    self.refresh_database()
+                    row=self.store.get(item[1])
+                    self.select(row)
+                    self.status.configure(text="Full LDRS story downloaded; adding it to Social Desk…")
+                    # The detail refresh has already happened.  Stage this returned
+                    # record directly so a weak/missing image credit cannot trigger
+                    # the same download repeatedly and suppress the result dialog.
+                    self.after(50, self._stage_selected_social_draft)
                 elif kind=="tested": self._working=False; messagebox.showinfo("LDRS connection",f"Connection passed{(' for '+item[1]) if item[1] else ''}.",parent=self); self.status.configure(text="LDRS API-key connection passed")
                 elif kind=="source_opened": self._working=False; self._source_browsers.append(item[1]); self.status.configure(text="Authenticated LDRS article opened in Chrome")
                 elif kind=="error": self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.status.configure(text="LDRS operation failed"); messagebox.showerror("Local Democracy Intelligence",item[1],parent=self)
@@ -440,9 +453,33 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
             self.status.configure(text="Downloading the full LDRS story before adding it to socials…")
             self.download_selected_detail(then_social=True)
             return
+        self._stage_selected_social_draft()
+
+    def _stage_selected_social_draft(self):
+        """Stage the selected LDRS story and always report the outcome."""
+
+        if getattr(self, "selected", None) is None:
+            messagebox.showwarning(
+                "Add to Socials",
+                "Select a Local Democracy story before adding it to Social Desk.",
+                parent=self,
+            )
+            return
         from newsdesk.social.selection import add_story_to_social_desk
-        story = _story_from_row(self.selected)
-        add_story_to_social_desk(self, story, module_key="content")
+        try:
+            story = _story_from_row(self.selected)
+            draft = add_story_to_social_desk(self, story, module_key="content")
+        except Exception as exc:
+            self.status.configure(text="LDRS story could not be added to Social Desk")
+            messagebox.showerror(
+                "Add to Socials failed",
+                f"The Local Democracy draft could not be created.\n\n{exc}",
+                parent=self,
+            )
+            return
+        if draft is not None:
+            self.status.configure(text="LDRS story added to Social Desk")
+            self._render_detail(self.selected)
 
     def open_social_desk(self):
         from modules.social_desk import open_social_desk

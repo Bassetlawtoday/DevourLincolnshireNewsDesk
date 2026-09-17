@@ -90,3 +90,8 @@ eventsdesk/data/latest_harvest*.json
 eventsdesk/data/latest_harvest*.jsonl
 eventsdesk/data/rejected_events.json
 eventsdesk/data/sport_source_health.json
+
+# Local Planning browser and runtime data
+data/north_lincolnshire_browser_profile/
+data/planning_source_cache.json
+logs/*.log*

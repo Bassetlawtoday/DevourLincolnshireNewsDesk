@@ -5,15 +5,19 @@ import time
 
 from services.planning_engine import run_weekly_download
 from modules.planning_report import open_planning_report
-from newsdesk.ui_support import maximize_window
+from newsdesk.ui_support import present_window_foreground
 
 
 LOGGER = logging.getLogger(__name__)
 
 
 class PlanningWindow:
-    def __init__(self):
-        self.window = ctk.CTkToplevel()
+    def __init__(self, parent=None, *, visible=True, auto_open_report=True):
+        self.parent = parent
+        self.visible = visible
+        self.auto_open_report = auto_open_report
+        self.report_refresh_target = None
+        self.window = ctk.CTkToplevel(parent)
         self.window.withdraw()
         self.window.title("Planning Intelligence")
         self.window.geometry("900x840")
@@ -22,10 +26,14 @@ class PlanningWindow:
         self.running = False
         self.started_at = None
         self.report_data = None
+        self.source_warning_count = 0
         self.report_window = None
 
         self.build()
-        self.window.after_idle(lambda: maximize_window(self.window))
+        if parent is not None:
+            self.window.transient(parent)
+        if visible:
+            self.window.after_idle(self.show_downloader)
 
     def build(self):
         title = ctk.CTkLabel(
@@ -210,11 +218,36 @@ class PlanningWindow:
                 return report_window
         except Exception:
             self.report_window = None
-        self.report_window = open_planning_report(self.window, self.report_data)
+        self.report_window = open_planning_report(
+            self.window,
+            self.report_data,
+            refresh_command=self.begin_background_refresh,
+        )
         return self.report_window
+
+    def show_downloader(self):
+        """Foreground this collector without starting a download."""
+        present_window_foreground(
+            self.window,
+            temporary_topmost=True,
+            maximized=True,
+        )
+        return self
+
+    def begin_background_refresh(self, report_window):
+        """Run collection while the dark briefing remains the visible UI."""
+        if self.running:
+            return self
+        self.visible = False
+        self.auto_open_report = False
+        self.report_refresh_target = report_window
+        self.window.withdraw()
+        self.download()
+        return self
 
     def reset_display(self):
         self.report_data = None
+        self.source_warning_count = 0
         self.report_button.configure(state="disabled")
         self.set_progress(0, "Overall Progress")
         self.list_progress.set(0)
@@ -268,7 +301,7 @@ class PlanningWindow:
 
     def start_download(self):
         self.write_log("")
-        self.write_log("Connecting to Bassetlaw Planning Portal...")
+        self.write_log("Connecting to Lincolnshire planning portals...")
 
         try:
             total = run_weekly_download(self)
@@ -306,14 +339,23 @@ class PlanningWindow:
         )
 
         self.set_progress(1, "Download Complete")
-        self.set_status("Complete")
-        self.set_current_application("Finished")
+        if self.source_warning_count:
+            self.set_status("Complete with source warnings")
+            self.set_current_application(
+                f"Finished with {self.source_warning_count} retained or unavailable sources"
+            )
+        else:
+            self.set_status("Complete")
+            self.set_current_application("Finished")
         self.downloaded.configure(
             text=f"Applications Downloaded : {total}"
         )
         self.elapsed.configure(text=f"Elapsed Time : {elapsed_text}")
+        completion_label = (
+            "Complete with warnings" if self.source_warning_count else "Complete"
+        )
         self.last_run.configure(
-            text=f"Last Download : Complete in {elapsed_text}"
+            text=f"Last Download : {completion_label} in {elapsed_text}"
         )
         self.download_button.configure(
             state="normal",
@@ -325,9 +367,25 @@ class PlanningWindow:
         if callable(callback) and self.report_data:
             callback({"report_data": self.report_data, "count": total})
 
-        if self.report_data:
+        target = self.report_refresh_target
+        if target is not None and self.report_data:
+            try:
+                target.window.after(
+                    0,
+                    lambda data=self.report_data: target.load_results(data),
+                )
+            except Exception:
+                LOGGER.debug("Could not refresh Planning briefing", exc_info=True)
+        elif self.report_data and self.auto_open_report:
             self.window.after(250, self.open_report)
 
 
 def open_planning():
-    PlanningWindow()
+    root = ctk.CTk()
+    root.withdraw()
+    PlanningWindow(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    open_planning()

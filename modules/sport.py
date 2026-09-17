@@ -1097,6 +1097,16 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             colour=TEXT_PRIMARY,
         )
 
+        from newsdesk.social.selection import social_workflow_status
+        workflow_status = social_workflow_status(story)
+        if workflow_status:
+            self._workspace_label(
+                workflow_status,
+                font=("Arial", 11, "bold"),
+                colour="#22c55e" if workflow_status == "SENT TO METRICOOL" else "#60a5fa",
+                pady=(5, 4),
+            )
+
         metadata = " • ".join(
             value
             for value in (
@@ -2084,9 +2094,11 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
             return
 
         if action_name == "ADD TO SOCIALS":
-            add_story_to_social_desk(
+            draft = add_story_to_social_desk(
                 self, self.selected_story, module_key="sport",
             )
+            if draft is not None:
+                self._select_story(self.selected_story)
             return
 
         if action_name == "OPEN SOURCE":

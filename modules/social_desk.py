@@ -200,9 +200,19 @@ class SocialDesk(ctk.CTkToplevel):
                 updated = datetime.fromisoformat(draft.updated_at).strftime("%d/%m/%Y %H:%M")
             except (TypeError, ValueError):
                 updated = "Date unavailable"
+            delivered = bool(
+                str(draft.metricool_id or "").strip()
+                or str(draft.status or "").strip().casefold()
+                == "sent to metricool as draft"
+            )
+            workflow_mark = (
+                "SENT TO METRICOOL" if delivered else "SENT TO SOCIAL DESK"
+            )
             ctk.CTkButton(
                 self.list_frame,
-                text=f"{label}\n{source.title()}  •  {updated}",
+                text=(
+                    f"{label}\n{source.title()}  •  {workflow_mark}  •  {updated}"
+                ),
                 anchor="w",
                 height=60,
                 font=("Arial", 14),
@@ -344,6 +354,7 @@ class SocialDesk(ctk.CTkToplevel):
     def _sent(self, result):
         self.current.status = "Sent to Metricool as draft"
         self.current.metricool_id = MetricoolClient.draft_id(result)
+        self.current.updated_at = datetime.now().astimezone().isoformat()
         self.store.save(self.drafts); self._refresh_list(); self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
         reference = f" ID {self.current.metricool_id}." if self.current.metricool_id else "."
         self.editor_status.configure(text=f"Draft delivered to Metricool{reference} Review it there.", text_color=SUCCESS)

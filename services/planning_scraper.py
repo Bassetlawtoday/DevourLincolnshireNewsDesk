@@ -12,51 +12,97 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 import time
 
 from services.models import PlanningApplication
-
-
-WEEKLY_URL = (
-    "https://publicaccess.bassetlaw.gov.uk/"
-    "online-applications/search.do?"
-    "action=weeklyList&searchType=Application"
-)
-
-
-RESULTS_URL = (
-    "https://publicaccess.bassetlaw.gov.uk/"
-    "online-applications/weeklyListResults.do?"
-    "action=firstPage"
-)
+from services.planning_sources import PlanningSource, enabled_idox_sources
 
 
 class PlanningScraper:
 
-    def __init__(self):
+    def __init__(self, source=None):
 
-        options = Options()
+        available_sources = enabled_idox_sources()
+        if not available_sources:
+            raise RuntimeError("No enabled Idox planning sources are configured.")
 
-        # Planning collection runs in the background; the browser remains
-        # available to Selenium without opening a visible Chrome window.
-        options.add_argument("--headless=new")
-        options.add_argument("--window-size=1920,1080")
+        self.source = None
+        self.set_source(source or available_sources[0])
 
-        self.driver = webdriver.Chrome(options=options)
-
-        self.wait = WebDriverWait(self.driver, 20)
+        self.driver = None
+        self.wait = None
+        self.restart_browser()
 
         self.applications = []
+
+    def set_source(self, source):
+        if not isinstance(source, PlanningSource):
+            raise TypeError("source must be a PlanningSource instance")
+        if source.platform != "idox_public_access":
+            raise ValueError(
+                f"Planning source {source.key!r} is not an Idox Public Access source."
+            )
+        if not source.enabled:
+            raise ValueError(f"Planning source {source.key!r} is disabled.")
+        self.source = source
 
     ####################################################################
     # Browser
     ####################################################################
 
+    def restart_browser(self):
+        """Replace Chrome while retaining this source and collected records."""
+        self.close()
+        options = Options()
+        if self.source.key == "city_of_lincoln":
+            # Lincoln's Idox portal intermittently stalls while loading
+            # non-essential page resources.  DOM-ready is sufficient for the
+            # weekly-list controls and avoids losing an otherwise usable page.
+            options.page_load_strategy = "eager"
+            options.add_experimental_option(
+                "prefs",
+                {"profile.managed_default_content_settings.images": 2},
+            )
+        options.add_argument("--headless=new")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        self.driver = webdriver.Chrome(options=options)
+        if self.source.key == "city_of_lincoln":
+            self.driver.set_page_load_timeout(60)
+        self.wait = WebDriverWait(self.driver, 25)
+
+    def _open_url(self, url):
+        """Open a URL, with a local retry for Lincoln's intermittent timeout."""
+        attempts = 3 if self.source.key == "city_of_lincoln" else 1
+        last_error = None
+        for attempt in range(attempts):
+            try:
+                self.driver.get(url)
+                return
+            except (TimeoutException, WebDriverException) as error:
+                last_error = error
+                try:
+                    self.driver.execute_script("window.stop();")
+                except Exception:
+                    pass
+                if attempt < attempts - 1:
+                    time.sleep(5 * (attempt + 1))
+        raise last_error
+
     def close(self):
 
         try:
-            self.driver.quit()
+            if self.driver is not None:
+                self.driver.quit()
 
         except:
 
             pass
+        finally:
+            self.driver = None
+            self.wait = None
 
     ####################################################################
     # Weekly List
@@ -77,7 +123,7 @@ class PlanningScraper:
             else "dateValidated"
         )
 
-        self.driver.get(WEEKLY_URL)
+        self._open_url(self.source.weekly_url)
 
         self.wait.until(
             EC.presence_of_element_located((By.ID, "week"))
@@ -143,7 +189,7 @@ class PlanningScraper:
                 f"{week_label} ({position}/{len(weeks)})..."
             )
 
-            self.driver.get(WEEKLY_URL)
+            self._open_url(self.source.weekly_url)
 
             self.wait.until(
                 EC.presence_of_element_located((By.ID, "week"))
@@ -506,6 +552,8 @@ class PlanningScraper:
         )
 
         application = PlanningApplication()
+        application.planning_authority = self.source.authority_label
+        application.planning_source_key = self.source.key
         application.url = str(url or "").strip()
 
         ################################################################
@@ -696,6 +744,15 @@ class PlanningScraper:
         elif field == "address":
             application.address = value
 
+        elif field in {"parish", "parishes"}:
+            application.parish = value
+
+        elif field in {"ward", "wards"}:
+            application.ward = value
+
+        elif field in {"town", "locality", "settlement"}:
+            application.locality = value
+
         elif field == "proposal":
             application.proposal = value
 
@@ -873,7 +930,11 @@ class PlanningScraper:
             if not app.reference:
                 continue
 
-            unique[app.reference] = app
+            identity = (
+                getattr(app, "planning_source_key", ""),
+                app.reference,
+            )
+            unique[identity] = app
 
         self.applications = list(unique.values())
 

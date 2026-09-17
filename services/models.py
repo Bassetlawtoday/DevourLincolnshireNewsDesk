@@ -8,7 +8,13 @@ class PlanningApplication:
     reference: str = ""
     alt_reference: str = ""
 
+    planning_authority: str = ""
+    planning_source_key: str = ""
+
     address: str = ""
+    locality: str = ""
+    parish: str = ""
+    ward: str = ""
     proposal: str = ""
 
     status: str = ""

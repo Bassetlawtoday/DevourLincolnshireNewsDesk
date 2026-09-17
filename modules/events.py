@@ -677,7 +677,11 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
         self._detail_image = None
         self._selected_image_asset = None
         for child in self.detail.winfo_children(): child.destroy()
-        ctk.CTkLabel(self.detail,text=_row_display_title(row),font=("Arial",22,"bold"),text_color=TEXT_PRIMARY,wraplength=520,justify="left",anchor="w").pack(fill="x",pady=(4,12))
+        ctk.CTkLabel(self.detail,text=_row_display_title(row),font=("Arial",22,"bold"),text_color=TEXT_PRIMARY,wraplength=520,justify="left",anchor="w").pack(fill="x",pady=(4,6))
+        from newsdesk.social.selection import social_workflow_status
+        workflow_status = social_workflow_status(_event_story(row))
+        if workflow_status:
+            ctk.CTkLabel(self.detail,text=workflow_status,font=("Arial",12,"bold"),text_color="#22c55e" if workflow_status == "SENT TO METRICOOL" else "#60a5fa",anchor="w").pack(fill="x",pady=(0,8))
         fields=(("Date / time",_format_event_range(row["start"], row["end"])),("Venue",row["venue"]),("Town",row["town"]),("County",row["county"]),("Category",_row_display_category(row)),("Price",_format_event_price(row["price_text"])),("Age",row["age_restriction"]),("Source",row["preferred_source"]),("Quality",f"{row['quality_status'] or 'unknown'} ({row['quality_score'] or 0}/100)"))
         for label,value in fields:
             if not value: continue
@@ -815,7 +819,9 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
         row = self.selected
         story = _event_story(row)
         story.body = story.summary
-        add_story_to_social_desk(self, story, module_key="events")
+        draft = add_story_to_social_desk(self, story, module_key="events")
+        if draft is not None:
+            self._render_detail(row)
 
     def open_social_desk(self):
         from modules.social_desk import open_social_desk
