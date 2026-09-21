@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from newsdesk.social.metricool import MetricoolClient, MetricoolError, MetricoolImageError
+from newsdesk.social.hashtags import normalise_hashtags, suggest_instagram_hashtags
 from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
 from newsdesk.social.text import clean_social_text, compose_metricool_text, repair_ldrs_draft
 from newsdesk.theme import (
@@ -38,6 +39,7 @@ class SocialDesk(ctk.CTkToplevel):
         self.drafts = self.store.load()
         self.current: SocialDraft | None = None
         self.network_vars: dict[str, ctk.BooleanVar] = {}
+        self.important_var = ctk.BooleanVar(value=False)
         self.draft_search_var = ctk.StringVar()
         self.draft_filter_var = ctk.StringVar(value="ALL")
         self._build()
@@ -140,7 +142,33 @@ class SocialDesk(ctk.CTkToplevel):
         for label, value in NETWORKS:
             variable = ctk.BooleanVar(value=False)
             self.network_vars[value] = variable
-            ctk.CTkCheckBox(networks, text=label, variable=variable, text_color=TEXT_PRIMARY, border_color=TEXT_MUTED, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER).pack(side="left", padx=(0, 15))
+            ctk.CTkCheckBox(networks, text=label, variable=variable, text_color=TEXT_PRIMARY, border_color=TEXT_MUTED, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER, command=self._network_changed).pack(side="left", padx=(0, 15))
+        editorial = ctk.CTkFrame(form, fg_color="transparent")
+        editorial.pack(fill="x", pady=(13, 0))
+        ctk.CTkCheckBox(
+            editorial,
+            text="IMPORTANT — PRIORITY REVIEW (private editorial note)",
+            variable=self.important_var,
+            text_color=BRAND_RED,
+            border_color=BRAND_RED,
+            fg_color=BRAND_RED,
+            hover_color=BRAND_RED_HOVER,
+        ).pack(side="left")
+        hashtag_row = ctk.CTkFrame(form, fg_color="transparent")
+        hashtag_row.pack(fill="x", pady=(11, 0))
+        hashtag_box = ctk.CTkFrame(hashtag_row, fg_color="transparent")
+        hashtag_box.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkLabel(hashtag_box, text="Instagram hashtags (editable; added only when Instagram is selected)", text_color=TEXT_SECONDARY, anchor="w").pack(fill="x")
+        self.hashtag_entry = ctk.CTkEntry(hashtag_box, fg_color=CARD_BG, border_color=BORDER, text_color=TEXT_PRIMARY, placeholder_text_color=TEXT_MUTED)
+        self.hashtag_entry.pack(fill="x", pady=(3, 0))
+        ctk.CTkButton(
+            hashtag_row,
+            text="GENERATE TAGS",
+            width=130,
+            fg_color=ACTION_BLUE,
+            hover_color=ACTION_BLUE_HOVER,
+            command=self._generate_hashtags,
+        ).pack(side="right", anchor="s")
         schedule = ctk.CTkFrame(form, fg_color="transparent")
         schedule.pack(fill="x", pady=(14, 0))
         self.date_entry = self._entry(schedule, "Metricool draft date/time (YYYY-MM-DD HH:MM)", side=True)
@@ -208,16 +236,17 @@ class SocialDesk(ctk.CTkToplevel):
             workflow_mark = (
                 "SENT TO METRICOOL" if delivered else "SENT TO SOCIAL DESK"
             )
+            important = bool(getattr(draft, "important", False))
             ctk.CTkButton(
                 self.list_frame,
                 text=(
-                    f"{label}\n{source.title()}  •  {workflow_mark}  •  {updated}"
+                    f"{'IMPORTANT  •  ' if important else ''}{label}\n{source.title()}  •  {workflow_mark}  •  {updated}"
                 ),
                 anchor="w",
                 height=60,
                 font=("Arial", 14),
-                fg_color="#334155",
-                hover_color="#475569",
+                fg_color=BRAND_RED if important else "#334155",
+                hover_color=BRAND_RED_HOVER if important else "#475569",
                 command=lambda item=draft: self._load(item),
             ).pack(fill="x", pady=(0, 6))
 
@@ -246,7 +275,13 @@ class SocialDesk(ctk.CTkToplevel):
             entry.delete(0, "end"); entry.insert(0, value)
         self.text_box.delete("1.0", "end"); self.text_box.insert("1.0", draft.text)
         self.text_box.yview_moveto(0)
+        hashtags = getattr(draft, "instagram_hashtags", "")
+        if "instagram" in draft.providers and not hashtags:
+            hashtags = suggest_instagram_hashtags(draft.title, draft.text)
+            draft.instagram_hashtags = hashtags
+        self.hashtag_entry.delete(0, "end"); self.hashtag_entry.insert(0, hashtags)
         for value, variable in self.network_vars.items(): variable.set(value in draft.providers)
+        self.important_var.set(bool(getattr(draft, "important", False)))
         self.rights_var.set(draft.image_rights_status == "approved")
         local_name = Path(draft.local_image_path).name if draft.local_image_path else ""
         self.local_image_label.configure(
@@ -254,6 +289,22 @@ class SocialDesk(ctk.CTkToplevel):
             text_color=TEXT_PRIMARY if local_name else TEXT_MUTED,
         )
         self.editor_status.configure(text=f"Status: {draft.status}")
+
+    def _network_changed(self):
+        if self.network_vars["instagram"].get() and not self.hashtag_entry.get().strip():
+            self._generate_hashtags()
+
+    def _generate_hashtags(self):
+        tags = suggest_instagram_hashtags(
+            self.title_entry.get().strip(),
+            self.text_box.get("1.0", "end").strip(),
+        )
+        self.hashtag_entry.delete(0, "end")
+        self.hashtag_entry.insert(0, tags)
+        self.editor_status.configure(
+            text="Instagram hashtag suggestions generated. Edit them before sending if required.",
+            text_color=TEXT_MUTED,
+        )
 
     def _choose_local_image(self):
         IMAGE_LIBRARY.mkdir(parents=True, exist_ok=True)
@@ -286,6 +337,8 @@ class SocialDesk(ctk.CTkToplevel):
         has_image = bool(draft.image_url or draft.local_image_path)
         draft.image_rights_status = "no image" if not has_image else ("approved" if self.rights_var.get() else "not reviewed")
         draft.providers = [value for value, variable in self.network_vars.items() if variable.get()]
+        draft.important = bool(self.important_var.get())
+        draft.instagram_hashtags = normalise_hashtags(self.hashtag_entry.get())
         raw = self.date_entry.get().strip().replace(" ", "T")
         draft.publication_datetime = raw + (":00" if len(raw) == 16 else "")
         draft.timezone = self.timezone_entry.get().strip() or "Europe/London"
@@ -320,7 +373,13 @@ class SocialDesk(ctk.CTkToplevel):
         if has_image and draft.image_rights_status != "approved":
             messagebox.showwarning("Social Desk", "Confirm that the image is approved for social use before sending.", parent=self); return
         outgoing_url = draft.source_url if draft.include_source_url else ""
-        outgoing = compose_metricool_text(draft.text, source_url=outgoing_url, image_caption=draft.image_caption, image_credit=draft.image_credit)
+        outgoing = compose_metricool_text(
+            draft.text,
+            source_url=outgoing_url,
+            image_caption=draft.image_caption,
+            image_credit=draft.image_credit,
+            instagram_hashtags=draft.instagram_hashtags if "instagram" in draft.providers else "",
+        )
         if "twitter" in draft.providers and len(outgoing) > 280:
             messagebox.showwarning("Social Desk", f"The X version is {len(outgoing)} characters. Reduce it to 280 or fewer.", parent=self); return
         try:
@@ -342,22 +401,40 @@ class SocialDesk(ctk.CTkToplevel):
                     source_url=draft.source_url if draft.include_source_url else "",
                     image_caption=draft.image_caption,
                     image_credit=draft.image_credit,
+                    instagram_hashtags=draft.instagram_hashtags if "instagram" in draft.providers else "",
                 )
-                result = MetricoolClient(token=settings["token"], user_id=settings["user_id"], blog_id=settings["blog_id"]).create_draft(text=social_text, providers=draft.providers, publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url, image_path=draft.local_image_path)
-                self.after(0, lambda: self._sent(result))
+                client = MetricoolClient(token=settings["token"], user_id=settings["user_id"], blog_id=settings["blog_id"])
+                result = client.create_draft(text=social_text, providers=draft.providers, publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url, image_path=draft.local_image_path)
+                note_warning = ""
+                if draft.important:
+                    post_id = MetricoolClient.draft_id(result)
+                    try:
+                        client.add_private_note(post_id, f"IMPORTANT — PRIORITY REVIEW\n{draft.title}")
+                    except Exception as exc:
+                        note_warning = str(exc)
+                self.after(0, lambda: self._sent(result, note_warning))
             except MetricoolImageError as exc:
                 self.after(0, lambda detail=str(exc): self._image_send_failed(detail))
             except Exception as exc:
                 self.after(0, lambda detail=str(exc): self._send_failed(detail))
         threading.Thread(target=worker, daemon=True).start()
 
-    def _sent(self, result):
+    def _sent(self, result, note_warning=""):
         self.current.status = "Sent to Metricool as draft"
         self.current.metricool_id = MetricoolClient.draft_id(result)
         self.current.updated_at = datetime.now().astimezone().isoformat()
         self.store.save(self.drafts); self._refresh_list(); self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
+        if str(getattr(self.current, "origin_updates_id", "") or "").strip():
+            from newsdesk.updates.store import UpdatesStore
+            UpdatesStore().mark_metricool(
+                self.current.origin_updates_id, self.current.metricool_id
+            )
         reference = f" ID {self.current.metricool_id}." if self.current.metricool_id else "."
-        self.editor_status.configure(text=f"Draft delivered to Metricool{reference} Review it there.", text_color=SUCCESS)
+        if note_warning:
+            self.editor_status.configure(text=f"Draft delivered to Metricool{reference} IMPORTANT remains marked locally, but Metricool could not add its private note: {note_warning}", text_color=BRAND_RED)
+        else:
+            suffix = " The private IMPORTANT note was added." if self.current.important else ""
+            self.editor_status.configure(text=f"Draft delivered to Metricool{reference} Review it there.{suffix}", text_color=SUCCESS)
 
     def _send_failed(self, detail):
         self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")

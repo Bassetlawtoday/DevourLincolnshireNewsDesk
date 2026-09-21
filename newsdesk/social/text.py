@@ -106,6 +106,7 @@ def compose_metricool_text(
     source_url: str = "",
     image_caption: str = "",
     image_credit: str = "",
+    instagram_hashtags: str = "",
 ) -> str:
     """Build the outgoing Metricool copy while keeping the editor uncluttered."""
 
@@ -116,6 +117,8 @@ def compose_metricool_text(
         parts.append(f"Image credit: {image_credit.strip()}")
     if source_url:
         parts.append(source_url.strip())
+    if instagram_hashtags:
+        parts.append(instagram_hashtags.strip())
     return "\n\n".join(part for part in parts if part)
 
 

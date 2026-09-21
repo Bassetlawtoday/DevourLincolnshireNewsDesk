@@ -201,6 +201,7 @@ class SportCollectionService:
                     )
 
             self._apply_final_recency_boundary(result)
+            self._reconcile_source_health(result)
             self._write_source_health(result)
             return result
 
@@ -248,6 +249,44 @@ class SportCollectionService:
                 "stories after processing.",
                 removed_count,
             )
+
+    @staticmethod
+    def _reconcile_source_health(result: SportCollectionResult) -> None:
+        """Make source counts describe stories retained in the final feed."""
+
+        retained_by_source: dict[str, int] = {}
+        for story in result.stories:
+            source_name = str(story.source or "").strip()
+            if source_name:
+                retained_by_source[source_name.casefold()] = (
+                    retained_by_source.get(source_name.casefold(), 0) + 1
+                )
+
+        for row in result.source_health:
+            if row.get("status") == "failed":
+                row["story_count"] = 0
+                continue
+
+            source_name = str(row.get("source_name") or "").strip()
+            retained = retained_by_source.get(source_name.casefold(), 0)
+            raw_count = int(row.get("story_count") or 0)
+            row["raw_story_count"] = raw_count
+            row["story_count"] = retained
+
+            if retained:
+                row["status"] = "yielding"
+                row["message"] = "Current stories retained in the Sport feed."
+            elif raw_count:
+                row["status"] = "no-current-stories"
+                row["message"] = (
+                    f"Reached successfully; {raw_count} candidate story/stories "
+                    "were removed by the final date or locality filters."
+                )
+            else:
+                row["status"] = "no-stories"
+                row["message"] = (
+                    "Source reached successfully; no candidate stories were found."
+                )
 
     def _attach_story_image(
         self,
@@ -339,6 +378,7 @@ class SportCollectionService:
                 "sources": len(result.source_health),
                 "yielding": sum(1 for row in result.source_health if row["status"] == "yielding"),
                 "no_stories": sum(1 for row in result.source_health if row["status"] == "no-stories"),
+                "no_current_stories": sum(1 for row in result.source_health if row["status"] == "no-current-stories"),
                 "failed": sum(1 for row in result.source_health if row["status"] == "failed"),
             },
             "sources": result.source_health,

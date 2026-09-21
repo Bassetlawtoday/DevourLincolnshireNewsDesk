@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "scope": "Greater Lincolnshire",
   "sources": [
     {
@@ -370,6 +370,33 @@
       "listing_url": "https://www.scunthorpe-united.co.uk/news",
       "location": "North Lincolnshire",
       "tags": ["Scunthorpe", "North Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Skegness Town",
+      "sport": "Football",
+      "organisation": "Skegness Town Association Football Club",
+      "listing_url": "https://www.skegnesstownafc.co.uk/news",
+      "location": "Lincolnshire",
+      "tags": ["Skegness", "Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Deeping Rangers",
+      "sport": "Football",
+      "organisation": "Deeping Rangers Football Club",
+      "listing_url": "https://www.deepingrangersfc.co.uk/news",
+      "location": "Lincolnshire",
+      "tags": ["Market Deeping", "Lincolnshire", "Football"],
+      "max_stories": 30
+    },
+    {
+      "name": "Market Rasen Racecourse",
+      "sport": "Horse Racing",
+      "organisation": "The Jockey Club",
+      "listing_url": "https://www.thejockeyclub.co.uk/marketrasen/media/news/",
+      "location": "Lincolnshire",
+      "tags": ["Market Rasen", "Lincolnshire", "Horse Racing"],
       "max_stories": 30
     }
   ]

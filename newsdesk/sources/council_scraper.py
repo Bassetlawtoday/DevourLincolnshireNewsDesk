@@ -7,7 +7,12 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 import json
+import os
 import re
+import shutil
+import socket
+import subprocess
+import time
 from time import perf_counter
 from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlsplit, urlunsplit
 import xml.etree.ElementTree as ET
@@ -100,51 +105,51 @@ class CouncilSourceScraper:
         stories: list[Story] = []
         seen_urls: set[str] = set()
         self._listing_failures.clear()
-        next_url = self.source.url
         try:
-            for _page in range(self.config["max_listing_pages"]):
-                html, resolved_url = self._request(next_url)
-                health.listing_pages_requested += 1
-                candidates, discovered_next = self.parse_listing(html, resolved_url)
-                if self._listing_failures:
-                    health.failures.extend(self._listing_failures)
-                    self._listing_failures.clear()
-                health.articles_found += len(candidates)
-                page_has_old_story = False
-                for candidate in candidates:
-                    if candidate.published_at is not None and candidate.published_at < cutoff:
-                        page_has_old_story = True
-                        continue
-                    if candidate.published_at is not None and candidate.published_at > current + timedelta(days=1):
-                        continue
-                    canonical = self.canonical_url(candidate.url)
-                    if canonical in seen_urls:
-                        continue
-                    seen_urls.add(canonical)
-                    try:
-                        story = self._collect_detail(candidate)
-                    except Exception as error:
-                        health.failures.append(f"{candidate.title}: {error}")
-                        continue
-                    published = self.parse_date(story.published)
-                    if published is None:
-                        health.failures.append(
-                            f"{candidate.title}: article publication date not found"[:300]
-                        )
-                        continue
-                    if published < cutoff:
-                        page_has_old_story = True
-                        continue
-                    if published <= current + timedelta(days=1):
-                        stories.append(story)
-                if page_has_old_story or not discovered_next:
-                    break
-                next_url = discovered_next
+            stories = self._collect_direct(current, cutoff, health, seen_urls)
+            if not stories and self.source.key in {
+                "east_lindsey_district_council",
+                "north_lincolnshire_council",
+                "south_holland_district_council",
+            }:
+                raise RuntimeError(
+                    f"{self.source.name} HTTP collection returned no complete articles"
+                )
             health.articles_retained = len(stories)
             health.successful = True
         except Exception as error:
             health.failures.append(str(error)[:300])
-            if self.source.search_fallback_query:
+            if self.source.key == "north_lincolnshire_council":
+                try:
+                    stories = self._collect_north_lincolnshire_browser(
+                        current, cutoff, health
+                    )
+                    health.articles_retained = len(stories)
+                    health.successful = True
+                except Exception as browser_error:
+                    health.failures.append(
+                        f"Browser fallback: {browser_error}"[:300]
+                    )
+            elif self.source.key == "east_lindsey_district_council":
+                # East Lindsey's Cloudflare check continuously re-challenges
+                # Chrome sessions opened or attached by automation. Opening a
+                # verification browser therefore cannot produce a reliable
+                # reusable session and can leave the entire Council refresh
+                # waiting indefinitely. Report the source as unavailable so
+                # CouncilCollectionService can retain its last complete feed.
+                health.failures.append(
+                    "Unavailable — blocked by source security"
+                )
+            elif self.source.key == "south_holland_district_council":
+                # Cloudflare repeatedly re-challenges automated and attached
+                # Chrome sessions on these GOSS council sites. Do not hold the
+                # whole Council refresh open for a manual check that cannot
+                # establish a reusable session, and do not replace genuine
+                # news with unverified search-index service pages.
+                health.failures.append(
+                    "Unavailable — blocked by source security"
+                )
+            elif self.source.search_fallback_query:
                 try:
                     fallback = self._collect_search_fallback(current, cutoff)
                     stories.extend(fallback)
@@ -160,6 +165,354 @@ class CouncilSourceScraper:
         finally:
             health.duration_seconds = perf_counter() - started
         return stories, health
+
+    def _collect_direct(
+        self,
+        current: datetime,
+        cutoff: datetime,
+        health: CouncilSourceHealth,
+        seen_urls: set[str],
+    ) -> list[Story]:
+        stories: list[Story] = []
+        next_url = self.source.url
+        for _page in range(self.config["max_listing_pages"]):
+            html, resolved_url = self._request(next_url)
+            health.listing_pages_requested += 1
+            candidates, discovered_next = self.parse_listing(html, resolved_url)
+            self._record_listing_failures(health)
+            health.articles_found += len(candidates)
+            page_has_old_story = False
+            for candidate in candidates:
+                if candidate.published_at is not None and candidate.published_at < cutoff:
+                    page_has_old_story = True
+                    continue
+                if candidate.published_at is not None and candidate.published_at > current + timedelta(days=1):
+                    continue
+                canonical = self.canonical_url(candidate.url)
+                if canonical in seen_urls:
+                    continue
+                seen_urls.add(canonical)
+                try:
+                    story = self._collect_detail(candidate)
+                except Exception as error:
+                    health.failures.append(f"{candidate.title}: {error}"[:300])
+                    continue
+                published = self.parse_date(story.published)
+                if published is None:
+                    health.failures.append(
+                        f"{candidate.title}: article publication date not found"[:300]
+                    )
+                    continue
+                if published < cutoff:
+                    page_has_old_story = True
+                    continue
+                if published <= current + timedelta(days=1):
+                    stories.append(story)
+            if page_has_old_story or not discovered_next:
+                break
+            next_url = discovered_next
+        return stories
+
+    def _record_listing_failures(self, health: CouncilSourceHealth) -> None:
+        if self._listing_failures:
+            health.failures.extend(self._listing_failures)
+            self._listing_failures.clear()
+
+    def _collect_north_lincolnshire_browser(
+        self,
+        current: datetime,
+        cutoff: datetime,
+        health: CouncilSourceHealth,
+    ) -> list[Story]:
+        """Use a persistent normal Chrome session only after HTTP is blocked."""
+        from selenium import webdriver
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        profile = (
+            Path("data") / "browser_profiles" / "north_lincolnshire_council"
+        ).resolve()
+        profile.mkdir(parents=True, exist_ok=True)
+        options = webdriver.ChromeOptions()
+        options.add_argument(f"--user-data-dir={profile}")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--start-maximized")
+        options.page_load_strategy = "eager"
+        driver = webdriver.Chrome(options=options)
+        stories: list[Story] = []
+        seen_urls: set[str] = set()
+        next_url = self.source.url
+        try:
+            for _page in range(self.config["max_listing_pages"]):
+                driver.get(next_url)
+                self._wait_for_north_lincolnshire_page(driver, WebDriverWait)
+                health.listing_pages_requested += 1
+                candidates, discovered_next = self.parse_listing(
+                    driver.page_source, driver.current_url
+                )
+                self._record_listing_failures(health)
+                candidates = [
+                    candidate for candidate in candidates
+                    if self._valid_north_lincolnshire_candidate(candidate)
+                ]
+                health.articles_found += len(candidates)
+                page_has_old_story = False
+                for candidate in candidates:
+                    if candidate.published_at is not None and candidate.published_at < cutoff:
+                        page_has_old_story = True
+                        continue
+                    canonical = self.canonical_url(candidate.url)
+                    if canonical in seen_urls:
+                        continue
+                    seen_urls.add(canonical)
+                    try:
+                        driver.get(candidate.url)
+                        self._wait_for_north_lincolnshire_page(driver, WebDriverWait)
+                        story = self._collect_detail_html(
+                            candidate, driver.page_source, driver.current_url,
+                            strict=True,
+                        )
+                    except Exception as error:
+                        health.failures.append(f"{candidate.title}: {error}"[:300])
+                        continue
+                    published = self.parse_date(story.published)
+                    if published is None or published < cutoff:
+                        page_has_old_story = True
+                        continue
+                    if published <= current + timedelta(days=1):
+                        stories.append(story)
+                if page_has_old_story or not discovered_next:
+                    break
+                next_url = discovered_next
+        finally:
+            driver.quit()
+        if not stories:
+            raise RuntimeError(
+                "North Lincolnshire browser collection returned no valid articles"
+            )
+        return stories
+
+    def _collect_south_holland_browser(
+        self,
+        current: datetime,
+        cutoff: datetime,
+        health: CouncilSourceHealth,
+    ) -> list[Story]:
+        """Verify in normal Chrome, then attach Selenium to the cleared session."""
+        return self._collect_verified_goss_browser(
+            current,
+            cutoff,
+            health,
+            profile_name="south_holland_district_council",
+            source_name="South Holland",
+            verification_seconds=120,
+        )
+
+    def _collect_verified_goss_browser(
+        self,
+        current: datetime,
+        cutoff: datetime,
+        health: CouncilSourceHealth,
+        *,
+        profile_name: str,
+        source_name: str,
+        verification_seconds: int,
+    ) -> list[Story]:
+        """Use one persistent normal-Chrome check for a protected GOSS site."""
+        from selenium import webdriver
+        from selenium.webdriver.support.ui import WebDriverWait
+
+        profile = (
+            Path("data") / "browser_profiles" / profile_name
+        ).resolve()
+        profile.mkdir(parents=True, exist_ok=True)
+        chrome = self._find_chrome_executable()
+        port = self._available_local_port()
+        browser = subprocess.Popen(
+            [
+                chrome,
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={profile}",
+                "--remote-allow-origins=*",
+                "--start-maximized",
+                "--new-window",
+                self.source.url,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            self._wait_for_manual_browser_verification(
+                port,
+                browser,
+                source_host=urlsplit(self.source.url).netloc,
+                source_name=source_name,
+                timeout_seconds=verification_seconds,
+            )
+        except Exception:
+            if browser.poll() is None:
+                browser.terminate()
+            raise
+
+        options = webdriver.ChromeOptions()
+        options.debugger_address = f"127.0.0.1:{port}"
+        options.page_load_strategy = "eager"
+        driver = webdriver.Chrome(options=options)
+        stories: list[Story] = []
+        seen_urls: set[str] = set()
+        try:
+            driver.get(self.source.url)
+            self._wait_for_browser_page(
+                driver, WebDriverWait, source_name, verification_seconds
+            )
+            health.listing_pages_requested += 1
+            candidates, _next = self.parse_listing(
+                driver.page_source, driver.current_url
+            )
+            self._record_listing_failures(health)
+            health.articles_found += len(candidates)
+            for candidate in candidates:
+                canonical = self.canonical_url(candidate.url)
+                if canonical in seen_urls:
+                    continue
+                seen_urls.add(canonical)
+                try:
+                    driver.get(candidate.url)
+                    self._wait_for_browser_page(
+                        driver, WebDriverWait, source_name, verification_seconds
+                    )
+                    story = self._collect_detail_html(
+                        candidate, driver.page_source, driver.current_url,
+                        strict=True,
+                    )
+                except Exception as error:
+                    health.failures.append(f"{candidate.title}: {error}"[:300])
+                    continue
+                published = self.parse_date(story.published)
+                if published is not None and cutoff <= published <= current + timedelta(days=1):
+                    stories.append(story)
+        finally:
+            driver.quit()
+            if browser.poll() is None:
+                browser.terminate()
+        if not stories:
+            raise RuntimeError(
+                f"{source_name} browser collection returned no current articles"
+            )
+        return stories
+
+    @staticmethod
+    def _find_chrome_executable() -> str:
+        candidates = [
+            shutil.which("chrome"),
+            shutil.which("chrome.exe"),
+            str(Path(os.environ.get("PROGRAMFILES", "")) / "Google/Chrome/Application/chrome.exe"),
+            str(Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google/Chrome/Application/chrome.exe"),
+            str(Path(os.environ.get("LOCALAPPDATA", "")) / "Google/Chrome/Application/chrome.exe"),
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).is_file():
+                return candidate
+        raise RuntimeError("Google Chrome could not be found for South Holland verification")
+
+    @staticmethod
+    def _available_local_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            return int(listener.getsockname()[1])
+
+    @staticmethod
+    def _wait_for_manual_browser_verification(
+        port: int,
+        browser,
+        *,
+        source_host: str = "sholland.gov.uk",
+        source_name: str = "South Holland",
+        timeout_seconds: int = 300,
+    ) -> None:
+        """Wait until normal Chrome has left Cloudflare's challenge page."""
+        endpoint = f"http://127.0.0.1:{port}/json"
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if browser.poll() is not None:
+                raise RuntimeError(
+                    f"{source_name} verification Chrome was closed before collection began"
+                )
+            try:
+                response = requests.get(endpoint, timeout=2)
+                response.raise_for_status()
+                pages = response.json()
+                for page in pages:
+                    title = str(page.get("title") or "").casefold()
+                    url = str(page.get("url") or "")
+                    if source_host.casefold() in url.casefold() and not any(
+                        marker in title
+                        for marker in ("just a moment", "security verification")
+                    ):
+                        return
+            except (requests.RequestException, ValueError):
+                pass
+            time.sleep(1)
+        raise RuntimeError(
+            f"{source_name} manual verification did not clear within "
+            f"{timeout_seconds // 60 or 1} minutes"
+        )
+
+    @staticmethod
+    def _wait_for_browser_page(
+        driver, wait_type, source_name: str, timeout_seconds: int = 300
+    ) -> None:
+        def ready(active) -> bool:
+            source = active.page_source.casefold()
+            challenged = (
+                "just a moment" in source
+                or "enable javascript and cookies to continue" in source
+                or "verifying that you are not a robot" in source
+                or "recaptcha" in source
+            )
+            return active.execute_script("return document.readyState") in {
+                "interactive", "complete"
+            } and not challenged
+
+        try:
+            wait_type(driver, timeout_seconds).until(ready)
+        except Exception as error:
+            raise RuntimeError(
+                f"{source_name} browser verification did not clear within "
+                f"{timeout_seconds // 60 or 1} minutes"
+            ) from error
+
+    @staticmethod
+    def _wait_for_north_lincolnshire_page(driver, wait_type) -> None:
+        def ready(active) -> bool:
+            source = active.page_source.casefold()
+            challenged = (
+                "bot verification" in source
+                or "verifying that you are not a robot" in source
+                or "recaptcha" in source
+            )
+            return active.execute_script("return document.readyState") in {
+                "interactive", "complete"
+            } and not challenged
+
+        try:
+            wait_type(driver, 300).until(ready)
+        except Exception as error:
+            raise RuntimeError(
+                "North Lincolnshire browser verification did not clear within five minutes"
+            ) from error
+
+    def _valid_north_lincolnshire_candidate(
+        self, candidate: CouncilCandidate
+    ) -> bool:
+        path = urlsplit(candidate.url).path
+        patterns = tuple(self.source.detail_path_patterns or ())
+        title = candidate.title.strip().casefold()
+        return bool(
+            title
+            and not title.endswith(" archives")
+            and "#" not in candidate.title
+            and (not patterns or any(re.search(pattern, path, re.I) for pattern in patterns))
+        )
 
     def _collect_search_fallback(
         self, current: datetime, cutoff: datetime
@@ -292,7 +645,94 @@ class CouncilSourceScraper:
     ) -> tuple[list[CouncilCandidate], str | None]:
         soup = BeautifulSoup(html, "html.parser")
         base_url = page_url or self.source.url
+        if self.source.key == "north_lincolnshire_council":
+            return self._parse_north_lincolnshire_listing(soup, base_url)
+        if self.source.key in {
+            "east_lindsey_district_council",
+            "south_holland_district_council",
+        }:
+            return self._parse_goss_listing(soup, base_url)
         return self._parse_generic_listing(soup, base_url)
+
+    def _parse_goss_listing(self, soup, base_url):
+        """Parse GOSS news lists whose article links sit outside main/article."""
+        candidates: list[CouncilCandidate] = []
+        seen: set[str] = set()
+        patterns = tuple(self.source.detail_path_patterns or ())
+        for anchor in soup.select("h2 a[href], h3 a[href], h4 a[href]"):
+            absolute = urljoin(base_url, str(anchor.get("href") or "").strip())
+            path = urlsplit(absolute).path
+            if (
+                not self._same_source_url(absolute)
+                or not any(re.search(pattern, path, re.I) for pattern in patterns)
+            ):
+                continue
+            canonical = self.canonical_url(absolute)
+            if canonical in seen:
+                continue
+            title = self._text(anchor)
+            if len(title) < 18:
+                continue
+            container = anchor.find_parent(("article", "li")) or anchor.find_parent("div")
+            image = container.select_one("img[src], img[data-src]") if container else None
+            summary = self._text(container.select_one("p")) if container else ""
+            candidates.append(
+                CouncilCandidate(
+                    title=title,
+                    url=absolute,
+                    published_at=None,
+                    summary=summary,
+                    image_url=urljoin(
+                        base_url,
+                        str(image.get("data-src") or image.get("src") or ""),
+                    ) if image else "",
+                    image_alt_text=str(image.get("alt", "")).strip() if image else "",
+                )
+            )
+            seen.add(canonical)
+        return candidates, self._next_link(soup, base_url)
+
+    def _parse_north_lincolnshire_listing(self, soup, base_url):
+        """Parse the verified WordPress card layout used by North Lincolnshire."""
+        candidates: list[CouncilCandidate] = []
+        seen: set[str] = set()
+        patterns = tuple(self.source.detail_path_patterns or ())
+        for card in soup.select(".cat-post"):
+            anchor = card.select_one("h5.card-title a[href]")
+            if anchor is None:
+                continue
+            absolute = urljoin(base_url, str(anchor.get("href") or "").strip())
+            path = urlsplit(absolute).path
+            if (
+                not self._same_source_url(absolute)
+                or (patterns and not any(re.search(pattern, path, re.I) for pattern in patterns))
+            ):
+                continue
+            canonical = self.canonical_url(absolute)
+            if canonical in seen:
+                continue
+            title = self._text(anchor)
+            published = self._listing_date(
+                title, self._text(card.select_one(".post-timedate"))
+            )
+            if not title or published is None:
+                continue
+            image = card.select_one("img[src], img[data-src]")
+            candidates.append(
+                CouncilCandidate(
+                    title=title,
+                    url=absolute,
+                    published_at=published,
+                    summary=self._text(card.select_one(".post-excerpt")),
+                    image_url=urljoin(
+                        base_url,
+                        str(image.get("data-src") or image.get("src") or ""),
+                    ) if image else "",
+                    image_alt_text=str(image.get("alt", "")).strip() if image else "",
+                )
+            )
+            seen.add(canonical)
+        return candidates, self._next_link(soup, base_url)
 
     def _parse_generic_listing(self, soup, base_url):
         """Discover article cards across Jadu, Drupal, GOSS and WordPress."""
@@ -301,8 +741,9 @@ class CouncilSourceScraper:
         seen: set[str] = set()
         patterns = tuple(self.source.detail_path_patterns or ())
         for anchor in soup.select(
-            "main h2 a[href], main h3 a[href], main h4 a[href], "
-            "#main h2 a[href], #main h3 a[href], #main h4 a[href], article a[href]"
+            "main h2 a[href], main h3 a[href], main h4 a[href], main h5 a[href], "
+            "#main h2 a[href], #main h3 a[href], #main h4 a[href], "
+            "#main h5 a[href], article a[href]"
         ):
             href = str(anchor.get("href") or "").strip()
             absolute = urljoin(base_url, href)
@@ -314,7 +755,7 @@ class CouncilSourceScraper:
             canonical = self.canonical_url(absolute)
             if canonical in seen or canonical == self.canonical_url(self.source.url):
                 continue
-            title_node = anchor.select_one("h2, h3, h4")
+            title_node = anchor.select_one("h2, h3, h4, h5")
             title = self._text(title_node or anchor)
             title = re.sub(r"^Image\s+", "", title, flags=re.I)
             title = re.sub(
@@ -324,7 +765,10 @@ class CouncilSourceScraper:
             if len(title) < 18:
                 continue
             container = anchor.find_parent(("article", "li")) or anchor.find_parent("div")
-            context = self._text(container)
+            date_node = container.select_one(
+                "time, .meta--date, .post-timedate, .date, .published"
+            ) if container else None
+            context = self._text(date_node) or self._text(container)
             published = self.parse_date(context)
             image = container.select_one("img[src], img[data-src]") if container else None
             summary = ""
@@ -419,9 +863,29 @@ class CouncilSourceScraper:
 
     def _collect_detail(self, candidate: CouncilCandidate) -> Story:
         html, resolved_url = self._request(candidate.url)
+        return self._collect_detail_html(candidate, html, resolved_url)
+
+    def _collect_detail_html(
+        self,
+        candidate: CouncilCandidate,
+        html: str,
+        resolved_url: str,
+        *,
+        strict: bool = False,
+    ) -> Story:
         soup = BeautifulSoup(html, "html.parser")
+        heading_text = self._text(soup.select_one("h1"))
+        if strict and not heading_text:
+            raise ValueError("article heading not found")
+        if strict and heading_text.casefold().endswith(" archives"):
+            raise ValueError("archive page rejected")
+        if strict and not self._valid_north_lincolnshire_candidate(
+            CouncilCandidate(heading_text or candidate.title, resolved_url, None)
+        ):
+            raise ValueError("non-article page rejected")
         content = (
-            soup.select_one("main article")
+            soup.select_one(".single-post .single-content")
+            or soup.select_one("main article")
             or soup.select_one("article")
             or soup.select_one("main .content")
             or soup.select_one("main .c-editable")
@@ -449,7 +913,9 @@ class CouncilSourceScraper:
         body = "\n\n".join(dict.fromkeys(paragraphs))
         if not body:
             raise ValueError("article body is empty")
-        title = self._text(soup.select_one("h1")) or candidate.title
+        if strict and (len(paragraphs) < 2 or len(body) < 160):
+            raise ValueError("article page did not contain enough story text")
+        title = heading_text or candidate.title
         summary = candidate.summary
         if not summary:
             summary = self._text(soup.select_one(".lede")) or paragraphs[0]
@@ -465,6 +931,8 @@ class CouncilSourceScraper:
             image_alt = str(image.get("alt", image_alt)).strip()
         collected_at = datetime.now(timezone.utc).isoformat()
         published = candidate.published_at or self._detail_date(soup)
+        if strict and published is None:
+            raise ValueError("article publication date not found")
         return Story(
             title=title,
             summary=summary,
@@ -486,10 +954,13 @@ class CouncilSourceScraper:
             ("meta[property='article:published_time'][content]", "content"),
             ("meta[name='date'][content]", "content"),
             ("meta[name='publish-date'][content]", "content"),
+            (".single-post .post-timedate", None),
         ):
             node = soup.select_one(selector)
             if node is not None:
-                parsed = self.parse_date(node.get(attribute) or node.get_text(" ", strip=True))
+                parsed = self.parse_date(
+                    node.get(attribute) if attribute else node.get_text(" ", strip=True)
+                )
                 if parsed is not None:
                     return parsed
         page_text = soup.get_text(" ", strip=True)
@@ -558,14 +1029,14 @@ class CouncilSourceScraper:
             }[unit]
             return datetime.now(timezone.utc) - delta
         text = re.sub(r"\b(\d{1,2})(?:st|nd|rd|th)\b", r"\1", text, flags=re.I)
-        prefixes = ("Article posted on ", "Last Updated on ")
+        prefixes = ("Article posted on ", "Published on ", "Last Updated on ")
         for prefix in prefixes:
             if prefix.casefold() in text.casefold():
                 position = text.casefold().rfind(prefix.casefold())
                 text = text[position + len(prefix):].strip()
         for pattern in (
             "%A, %B %d, %Y", "%A %d %B %Y", "%d %B %Y",
-            "%B %d, %Y", "%d %b %Y", "%Y-%m-%d",
+            "%B %d, %Y", "%B %d %Y", "%d %b %Y", "%Y-%m-%d",
             "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S",
         ):
             try:
@@ -576,10 +1047,10 @@ class CouncilSourceScraper:
             r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[, ]+"
             r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
             r"\s+\d{1,2},\s+\d{4}",
-            r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+"
+            r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[,]?\s+"
             r"\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}",
             r"\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}",
-            r"(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}",
+            r"(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}",
         )
         for expression in embedded_patterns:
             match = re.search(expression, text, re.I)

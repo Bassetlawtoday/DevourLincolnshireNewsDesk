@@ -301,6 +301,13 @@ class GenericWebsiteScraper(BaseScraper):
         soup = BeautifulSoup(response.body, "html.parser")
         self._discovery_scores.clear()
         self._publication_feed_metadata = self._load_publication_feed_metadata()
+        pitchero_stories = self._stories_from_pitchero_page_data(
+            soup, response.url
+        )
+        if pitchero_stories:
+            self._last_candidate_count = len(pitchero_stories)
+            self._log_collection_summary(len(pitchero_stories))
+            return pitchero_stories[: self.definition.max_stories]
         anchors = self._candidate_anchors(soup)
         self._last_candidate_count = len(
             {
@@ -571,6 +578,98 @@ class GenericWebsiteScraper(BaseScraper):
                 )
 
         self._log_collection_summary(len(stories))
+        return stories
+
+    def _stories_from_pitchero_page_data(
+        self,
+        soup: BeautifulSoup,
+        base_url: str,
+    ) -> list[Story]:
+        """Extract Pitchero's server-supplied news records.
+
+        Current Pitchero club pages render their news cards in JavaScript. The
+        official records are nevertheless present in ``__NEXT_DATA__``. Using
+        those records avoids browser automation and restores all configured
+        Pitchero clubs through one shared route.
+        """
+
+        node = soup.select_one("script#__NEXT_DATA__")
+        if not isinstance(node, Tag):
+            return []
+        try:
+            payload = json.loads(node.string or node.get_text() or "")
+            messages = (
+                payload.get("props", {})
+                .get("initialReduxState", {})
+                .get("activityStream", {})
+                .get("messages", {})
+            )
+        except (AttributeError, TypeError, ValueError):
+            return []
+        if not isinstance(messages, dict):
+            return []
+
+        stories: list[Story] = []
+        seen: set[str] = set()
+        for record in messages.values():
+            if not isinstance(record, dict):
+                continue
+            record_type = str(record.get("type") or "").strip()
+            title = self._clean_text(record.get("title") or "")
+            if not self._title_is_allowed(title):
+                continue
+            published = str(record.get("published") or "").strip()
+            published_at = self._parse_publication_datetime(published)
+            article_id = str(record.get("article_id") or "").strip()
+            if record_type == "news" and article_id:
+                url = urljoin(
+                    base_url,
+                    f"/news/{self._slugify(title)}-{article_id}.html",
+                )
+            elif record_type == "match_report":
+                fixture = record.get("fixture") or {}
+                fixture_id = str(fixture.get("fixture_id") or "").strip()
+                team_id = str(record.get("team_id") or "").strip()
+                if not fixture_id or not team_id:
+                    continue
+                url = urljoin(
+                    base_url,
+                    f"/teams/{team_id}/match-centre/{fixture_id}/report",
+                )
+            else:
+                continue
+            key = self._normalise_url(url).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            self._pre_recency_urls.add(url)
+            self._last_pre_recency_count = len(self._pre_recency_urls)
+            recency_reason = self._recency_rejection_reason(published_at)
+            if recency_reason:
+                self._log_recency_rejection(
+                    url=url,
+                    published_at=published_at,
+                    reason=recency_reason,
+                )
+                continue
+            story = self._build_story(
+                title=title,
+                summary=self._clean_text(record.get("tagline") or ""),
+                url=url,
+                published=published,
+                image_url=str(record.get("image") or "").strip(),
+                article_content_status="feed",
+            )
+            author = record.get("author") or {}
+            if isinstance(author, dict):
+                story.author = self._clean_text(author.get("name") or "")
+            story.extras["collector_route"] = "pitchero-next-data"
+            story.extras["pitchero_record_type"] = record_type
+            if article_id:
+                story.extras["pitchero_article_id"] = article_id
+            stories.append(story)
+            if len(stories) >= self.definition.max_stories:
+                break
         return stories
 
     def _stories_from_content_api(self, response: ScrapeResponse) -> list[Story]:

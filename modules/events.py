@@ -456,6 +456,27 @@ def open_events(master=None):
     return _active_window
 
 
+def get_current_event_stories() -> list[Story]:
+    """Return the current quality-controlled event set without opening Tk."""
+    connection = _connect()
+    if connection is None:
+        return []
+    try:
+        rows = connection.execute(
+            "SELECT DISTINCT e.* FROM events e WHERE e.active=1 "
+            "AND e.lifecycle_state IN ('scheduled','postponed') ORDER BY e.start"
+        ).fetchall()
+        rejections = _load_rejections()
+        return [
+            _event_story(row) for row in rows
+            if not _row_is_rejected(row, rejections)
+            and not _row_fails_quality_gate(row)
+            and not _row_is_cinema_event(row)
+        ]
+    finally:
+        connection.close()
+
+
 class EventsIntelligenceWindow(ctk.CTkToplevel):
     """Search, review, refresh and newsletter-select current events."""
     def __init__(self, master=None):
@@ -889,6 +910,10 @@ class EventsIntelligenceWindow(ctk.CTkToplevel):
 
                 if ok:
                     self.refresh_database()
+                    from newsdesk.updates.store import UpdatesStore
+                    UpdatesStore().ingest(
+                        "events", (_event_story(row) for row in self.rows)
+                    )
                     checked = payload.get("selected_sources", 0)
                     successful = payload.get("successful_sources", 0)
                     zero_yield = payload.get("zero_yield_sources", 0)

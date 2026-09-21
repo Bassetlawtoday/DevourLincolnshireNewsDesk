@@ -627,6 +627,8 @@ class FireIntelligenceWindow(ctk.CTkToplevel):
             )
 
         if notify_dashboard:
+            from newsdesk.updates.store import UpdatesStore
+            UpdatesStore().ingest("fire", self.stories)
             self._window_support.notify_story_refresh(
                 self.stories, self.publish_results, errors
             )

@@ -207,6 +207,19 @@ class MetricoolClient:
             body["media"] = [self.import_source_image(image_url)]
         return self._request("POST", "/v2/scheduler/posts", query={"blogId": self.blog_id, "userId": self.user_id}, body=body)
 
+    def add_private_note(self, post_id: str, content: str):
+        """Attach an editorial note to a Metricool draft; notes are never published."""
+        identifier = str(post_id or "").strip()
+        note = str(content or "").strip()
+        if not identifier or not note:
+            raise MetricoolError("A Metricool post ID and note are required.")
+        return self._request(
+            "POST",
+            f"/v2/scheduler/posts/{identifier}/notes",
+            query={"blogId": self.blog_id, "userId": self.user_id},
+            body={"content": note},
+        )
+
     @staticmethod
     def draft_id(response: Any) -> str:
         if not isinstance(response, dict): return ""

@@ -716,11 +716,16 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
 
         health = list(source_health or [])
         yielding = sum(1 for row in health if row.get("status") == "yielding")
-        reached = sum(1 for row in health if row.get("status") != "failed")
+        no_current = sum(
+            1 for row in health if row.get("status") == "no-current-stories"
+        )
+        no_stories = sum(
+            1 for row in health if row.get("status") == "no-stories"
+        )
         failed = sum(1 for row in health if row.get("status") == "failed")
         health_text = (
-            f" Sources: {yielding} yielding, {reached - yielding} with no stories, "
-            f"{failed} failed."
+            f" Sources: {yielding} current, {no_current} with only old/filtered "
+            f"stories, {no_stories} with none found, {failed} failed."
             if health
             else ""
         )
@@ -732,6 +737,8 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         )
 
         if notify_dashboard:
+            from newsdesk.updates.store import UpdatesStore
+            UpdatesStore().ingest("sport", self.stories)
             self._window_support.notify_story_refresh(
                 self.stories, self.publish_results, errors
             )
@@ -1076,6 +1083,16 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
 
                 if result.successful:
                     self.publish_results[id(story)] = result.publish_result
+
+                # Keep the central Updates Desk snapshot aligned with the
+                # richer story selected in Sport Intelligence.
+                try:
+                    from newsdesk.updates.store import UpdatesStore
+                    UpdatesStore().ingest("sport", [story])
+                except Exception:
+                    LOGGER.exception(
+                        "Could not synchronise enriched Sport story to Updates Desk"
+                    )
 
         except Exception as error:
             LOGGER.exception("Article enrichment failed: %s", error)

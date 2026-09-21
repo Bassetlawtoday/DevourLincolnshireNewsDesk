@@ -36,6 +36,18 @@ def _real_image(value: str) -> str:
     return "" if "ldrs.org.uk/assets/images/placeholder.png" in image_url.casefold() else image_url
 
 
+def _add_ldrs_author_credit(text: str, author: str) -> str:
+    """Prepend the LDRS author credit once, preserving the supplied copy."""
+    clean_author = str(author or "").strip()
+    if not clean_author:
+        return str(text or "").strip()
+    byline = f"By: {clean_author}, LDRS."
+    clean_text = str(text or "").strip()
+    if byline.casefold() in clean_text.casefold():
+        return clean_text
+    return f"{byline}\n\n{clean_text}".strip()
+
+
 def social_workflow_status(story) -> str:
     """Return the persisted Social Desk stage for a newsroom story."""
     source_url = str(getattr(story, "url", "") or "").strip()
@@ -53,7 +65,9 @@ def social_workflow_status(story) -> str:
     return "SENT TO METRICOOL" if delivered else "SENT TO SOCIAL DESK"
 
 
-def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft | None:
+def add_story_to_social_desk(
+    parent, story, *, module_key: str, updates_item_id: str = ""
+) -> SocialDraft | None:
     """Stage a Story directly in Social Desk without using Newsletter Desk."""
 
     title = str(getattr(story, "title", "") or "").strip()
@@ -96,6 +110,16 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
     draft.image_credit = image_credit
     draft.image_rights_status = _rights_status(image_url, image_credit, module_key)
     draft.source_kind = module_key
+    if updates_item_id:
+        existing_origin = str(getattr(draft, "origin_updates_id", "") or "").strip()
+        if existing_origin and existing_origin != updates_item_id:
+            messagebox.showwarning(
+                "Add to Socials",
+                "This social draft is already linked to another Updates Desk item.",
+                parent=parent,
+            )
+            return None
+        draft.origin_updates_id = updates_item_id
     if not draft.publication_datetime:
         draft.publication_datetime = (datetime.now() + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S")
     draft.timezone = draft.timezone or settings.get("timezone") or "Europe/London"
@@ -111,6 +135,7 @@ def add_story_to_social_desk(parent, story, *, module_key: str) -> SocialDraft |
     }.get(module_key, "Blank social draft")
     if module_key == "content":
         repair_ldrs_draft(draft)
+        draft.text = _add_ldrs_author_credit(draft.text, author)
     draft.updated_at = datetime.now().astimezone().isoformat()
     if not existed:
         drafts.append(draft)

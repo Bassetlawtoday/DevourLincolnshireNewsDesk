@@ -108,6 +108,19 @@ class DashboardRefreshCoordinator:
             result.item_keys = self.item_keys(module_key, payload)
             result.updates_date = result.completed_at.astimezone().date().isoformat()
         if result.success and payload is not None:
+            if module_key in {"police", "fire", "sport", "council"}:
+                try:
+                    from newsdesk.updates.store import UpdatesStore
+                    UpdatesStore().ingest(
+                        module_key, payload.get("stories") or []
+                    )
+                except Exception:
+                    # Updates Desk is an auxiliary review queue.  A storage
+                    # problem must never turn a successful source refresh into
+                    # a Police/Fire/Sport/Council failure.
+                    LOGGER.exception(
+                        "Could not add %s refresh to Updates Desk", module_key
+                    )
             if module_key == "planning":
                 try:
                     self.planning_cache.save(
@@ -299,7 +312,7 @@ class DashboardRefreshCoordinator:
         from eventsdesk.harvest_engine import MidlandsHarvestEngine
         from eventsdesk.source_catalog import SourceCatalog
         from eventsdesk.source_scope import enabled_sources
-        from modules.events import EVENTS_DATA_DIR, EVENTS_DATABASE, EVENTS_SUMMARY, get_event_dashboard_summary
+        from modules.events import EVENTS_DATA_DIR, EVENTS_DATABASE, EVENTS_SUMMARY, get_event_dashboard_summary, get_current_event_stories
         selected = enabled_sources(SourceCatalog.load_default(), EVENTS_DATA_DIR)
         if not selected:
             raise RuntimeError("No EventsDesk sources are enabled")
@@ -307,6 +320,8 @@ class DashboardRefreshCoordinator:
             database=str(EVENTS_DATABASE), output=str(EVENTS_SUMMARY),
             source_ids=[source.id for source in selected], skip_network_preflight=False,
         )
+        from newsdesk.updates.store import UpdatesStore
+        UpdatesStore().ingest("events", get_current_event_stories())
         return int(get_event_dashboard_summary()["count"]), {"summary": result}
 
     @staticmethod
@@ -327,4 +342,7 @@ class DashboardRefreshCoordinator:
         except Exception as exc:
             store.finish_run(run_id, discovered=0, stored=0, status="failed", message=str(exc))
             raise
+        from modules.content import get_current_content_stories
+        from newsdesk.updates.store import UpdatesStore
+        UpdatesStore().ingest("content", get_current_content_stories())
         return int(store.summary()["count"]), {"stored": stored, "discovered": len(rows), "scope": "Latest 100"}

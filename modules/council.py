@@ -285,6 +285,8 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
             )
         )
         if notify_dashboard:
+            from newsdesk.updates.store import UpdatesStore
+            UpdatesStore().ingest("council", self.stories)
             self._window_support.notify_dashboard({
                 "stories": self.stories,
                 "publish_results": {},

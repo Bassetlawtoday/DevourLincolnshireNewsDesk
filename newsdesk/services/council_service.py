@@ -164,9 +164,13 @@ class CouncilCollectionService:
         result = CouncilCollectionResult()
         collected: list[Story] = []
         current = now or datetime.now(timezone.utc)
-        for source in self.config["sources"]:
-            if not source.enabled:
-                continue
+        sources = [source for source in self.config["sources"] if source.enabled]
+        protected_last = {
+            "east_lindsey_district_council": 1,
+            "north_lincolnshire_council": 2,
+        }
+        sources.sort(key=lambda source: protected_last.get(source.key, 0))
+        for source in sources:
             scraper = self.scraper_factory(source, config=self.config)
             try:
                 stories, health = scraper.collect(now=current)
@@ -183,6 +187,18 @@ class CouncilCollectionService:
                 result.errors.append(
                     f"{source.name}: {health.failures[0] if health.failures else 'source failed'}"
                 )
+                if source.key in {
+                    "east_lindsey_district_council",
+                    "north_lincolnshire_council",
+                    "south_holland_district_council",
+                }:
+                    retained = self._previous_complete_source_stories(source)
+                    if retained:
+                        stories = retained
+                        health.articles_retained = len(retained)
+                        health.failures.append(
+                            f"Retained {len(retained)} complete stories from the previous successful refresh"
+                        )
             collected.extend(stories)
 
         managed_stories, managed_errors = collect_managed_websites("council")
@@ -221,6 +237,35 @@ class CouncilCollectionService:
 
         result.stories = prepare_lincolnshire_feed(deduplicated)
         return result
+
+    @staticmethod
+    def _previous_complete_source_stories(source: CouncilSource) -> list[Story]:
+        """Retain genuine full stories when a protected source is unavailable."""
+        try:
+            from newsdesk.dashboard.feed_snapshot_store import FeedSnapshotStore
+
+            restored = FeedSnapshotStore().load("council")
+            if not restored:
+                return []
+            payload, _completed_at = restored
+            retained = []
+            for story in payload.get("stories", []):
+                if (
+                    story.extras.get("source_key") != source.key
+                    and story.source != source.name
+                ):
+                    continue
+                if (
+                    story.extras.get("content_completeness") == "summary_only"
+                    or story.extras.get("search_index_fallback")
+                    or story.title.strip().casefold().endswith(" archives")
+                    or len((story.body or "").strip()) < 160
+                ):
+                    continue
+                retained.append(story)
+            return retained
+        except Exception:
+            return []
 
     @staticmethod
     def _deduplicate(

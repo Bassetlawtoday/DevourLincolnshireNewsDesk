@@ -95,3 +95,10 @@ eventsdesk/data/sport_source_health.json
 data/north_lincolnshire_browser_profile/
 data/planning_source_cache.json
 logs/*.log*
+# Local automated-browser profiles and session data
+data/browser_profiles/
+**/browser_profiles/
+# Python and local runtime files
+# Local secrets and environment configuration
+*.key
+*.pem

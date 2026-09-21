@@ -123,6 +123,7 @@ def _story_from_row(row) -> Story:
             "authorities": authorities,
             "categories": categories,
             "image_title": image_subject,
+            "detail_complete": bool(int(row["detail_complete"] or 0)),
         },
     )
 
@@ -134,6 +135,14 @@ def get_content_dashboard_summary() -> dict:
         summary = {"count": 0, "updated": "Never"}
     summary["status"] = "API key configured" if has_api_key() else "API key required"
     return summary
+
+
+def get_current_content_stories() -> list[Story]:
+    """Return stored Lincolnshire LDRS rows as normalised newsroom stories."""
+    return [
+        _story_from_row(row) for row in ContentStore().list_stories()
+        if _row_is_lincolnshire(row)
+    ]
 
 
 def open_content(master=None):
@@ -374,7 +383,11 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
             while True:
                 item=self._queue.get_nowait(); kind=item[0]
                 if kind=="progress": self.status.configure(text=item[1])
-                elif kind=="done": self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.refresh_database(); self.status.configure(text=f"UPDATE PASSED • {item[1]:,} Lincolnshire stories discovered • {item[2]:,} stored")
+                elif kind=="done":
+                    self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.refresh_database()
+                    from newsdesk.updates.store import UpdatesStore
+                    UpdatesStore().ingest("content", (_story_from_row(row) for row in self.rows))
+                    self.status.configure(text=f"UPDATE PASSED • {item[1]:,} Lincolnshire stories discovered • {item[2]:,} stored")
                 elif kind=="detail": self._working=False; self.refresh_database(); row=self.store.get(item[1]); self.select(row); self.status.configure(text="Full LDRS story and media downloaded")
                 elif kind=="detail_social":
                     self._working=False

@@ -24,6 +24,7 @@ from modules.social_desk import open_social_desk
 from modules.council import open_council
 from modules.events import open_events, get_event_dashboard_summary
 from modules.content import open_content, get_content_dashboard_summary
+from modules.updates_desk import open_updates_desk, get_updates_dashboard_summary
 from modules.planning import PlanningWindow
 from modules.planning_report import open_planning_report
 from modules.police import open_police
@@ -217,6 +218,11 @@ class Dashboard(ctk.CTkFrame):
         self._build_content_card(grid).grid(
             row=row, column=column, sticky="nsew", padx=6, pady=6
         )
+        index += 1
+        row, column = divmod(index, 4)
+        self._build_updates_card(grid).grid(
+            row=row, column=column, sticky="nsew", padx=6, pady=6
+        )
 
     def _build_module_card(self, parent, key):
         card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
@@ -295,6 +301,25 @@ class Dashboard(ctk.CTkFrame):
             return existing
         module = open_content(self.master)
         track_window_reference(self.module_windows, "content", module)
+        return module
+
+    def _build_updates_card(self, parent):
+        summary = get_updates_dashboard_summary()
+        card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
+        ctk.CTkLabel(card, text="Updates Desk", font=("Arial", 16, "bold"), text_color=TEXT_PRIMARY, anchor="w").pack(fill="x", padx=17, pady=(16, 8))
+        ctk.CTkLabel(card, text=f"{summary['new']:,} new", font=("Arial", 30, "bold"), text_color=TEXT_PRIMARY, anchor="w").pack(fill="x", padx=17)
+        ctk.CTkLabel(card, text="All refreshed modules except Planning", font=("Arial", 12), text_color=TEXT_MUTED, anchor="w").pack(fill="x", padx=17, pady=(2, 7))
+        ctk.CTkLabel(card, text=f"{summary['social']:,} sent to Social Desk", font=("Arial", 11), text_color=ACCENT if summary['social'] else TEXT_MUTED, anchor="w").pack(fill="x", padx=17)
+        ctk.CTkLabel(card, text=f"{summary['metricool']:,} sent to Metricool", font=("Arial", 12, "bold"), text_color=SUCCESS if summary['metricool'] else TEXT_MUTED, anchor="w").pack(fill="x", padx=17, pady=(5, 12))
+        ctk.CTkButton(card, text="OPEN", height=34, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER, command=self._open_updates_desk).pack(fill="x", padx=17, pady=(0, 16))
+        return card
+
+    def _open_updates_desk(self):
+        existing = self.module_windows.get("updates")
+        if focus_existing_window(existing):
+            return existing
+        module = open_updates_desk(self.master)
+        track_window_reference(self.module_windows, "updates", module)
         return module
 
     def _open_social_desk(self):
