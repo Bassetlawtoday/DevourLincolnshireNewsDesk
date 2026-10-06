@@ -26,6 +26,11 @@ from newsdesk.story import Story
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "council.json"
 DEFAULT_MAX_AGE_DAYS = 14
 USER_AGENT = "DevourLincolnshireNewsDesk-Council/1.0"
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/129.0.0.0 Safari/537.36"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +88,13 @@ class CouncilSourceScraper:
         self.session = session or requests.Session()
         self._owns_session = session is None
         self._listing_failures: list[str] = []
-        self.session.headers.update({"User-Agent": USER_AGENT})
+        self._boston_session_warmed = False
+        user_agent = (
+            BROWSER_USER_AGENT
+            if self.source.key == "boston_borough_council"
+            else USER_AGENT
+        )
+        self.session.headers.update({"User-Agent": user_agent})
         self.session.headers.update({
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-GB,en;q=0.9",
@@ -108,6 +119,7 @@ class CouncilSourceScraper:
         try:
             stories = self._collect_direct(current, cutoff, health, seen_urls)
             if not stories and self.source.key in {
+                "boston_borough_council",
                 "east_lindsey_district_council",
                 "north_lincolnshire_council",
                 "south_holland_district_council",
@@ -130,7 +142,10 @@ class CouncilSourceScraper:
                     health.failures.append(
                         f"Browser fallback: {browser_error}"[:300]
                     )
-            elif self.source.key == "east_lindsey_district_council":
+            elif self.source.key in {
+                "boston_borough_council",
+                "east_lindsey_district_council",
+            }:
                 # East Lindsey's Cloudflare check continuously re-challenges
                 # Chrome sessions opened or attached by automation. Opening a
                 # verification browser therefore cannot produce a reliable
@@ -618,10 +633,28 @@ class CouncilSourceScraper:
     def _request(self, url: str) -> tuple[str, str]:
         if not self._same_source_url(url):
             raise ValueError(f"Refusing off-source Council URL: {url}")
+        if (
+            self.source.key == "boston_borough_council"
+            and not self._boston_session_warmed
+        ):
+            # Boston uses the same public GOSS platform as several neighbouring
+            # councils.  Establish an ordinary first-party session before
+            # requesting its news index; this uses no browser automation and
+            # never attempts to solve or bypass a security challenge.
+            self._boston_session_warmed = True
+            homepage = f"{urlsplit(self.source.url).scheme}://{urlsplit(self.source.url).netloc}/"
+            warmup = self.session.get(
+                homepage,
+                timeout=self.config["request_timeout_seconds"],
+            )
+            warmup.raise_for_status()
+            if self._is_challenge(warmup.text.casefold()):
+                raise RuntimeError("Boston Council returned an anti-bot challenge")
         try:
             response = self.session.get(
                 url,
                 timeout=self.config["request_timeout_seconds"],
+                headers={"Referer": self.source.url},
             )
             response.raise_for_status()
             if not self._same_source_url(response.url):
@@ -635,9 +668,13 @@ class CouncilSourceScraper:
 
     @staticmethod
     def _is_challenge(text: str) -> bool:
+        text = str(text or "").casefold()
         return (
             "verifying that you are not a robot" in text
             or "enable javascript and cookies to continue" in text
+            or "performing security verification" in text
+            or "verify you are human" in text
+            or "just a moment" in text
         )
 
     def parse_listing(
@@ -648,6 +685,7 @@ class CouncilSourceScraper:
         if self.source.key == "north_lincolnshire_council":
             return self._parse_north_lincolnshire_listing(soup, base_url)
         if self.source.key in {
+            "boston_borough_council",
             "east_lindsey_district_council",
             "south_holland_district_council",
         }:
@@ -863,7 +901,12 @@ class CouncilSourceScraper:
 
     def _collect_detail(self, candidate: CouncilCandidate) -> Story:
         html, resolved_url = self._request(candidate.url)
-        return self._collect_detail_html(candidate, html, resolved_url)
+        return self._collect_detail_html(
+            candidate,
+            html,
+            resolved_url,
+            strict=self.source.key == "boston_borough_council",
+        )
 
     def _collect_detail_html(
         self,

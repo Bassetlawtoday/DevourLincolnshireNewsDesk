@@ -88,11 +88,13 @@ class SocialDraft:
     providers: list[str] = field(default_factory=list)
     important: bool = False
     instagram_hashtags: str = ""
+    bluesky_text: str = ""
+    bluesky_metricool_id: str = ""
     publication_datetime: str = ""
     timezone: str = "Europe/London"
     status: str = "local draft"
     metricool_id: str = ""
-    # Optional permanent link back to the central Updates Desk queue.
+    # Permanent link back to the central Updates Desk queue.
     origin_updates_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

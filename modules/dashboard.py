@@ -21,8 +21,8 @@ from modules.fire import open_fire
 from modules.system_health import open_system_health
 from modules.data_retention import open_data_retention
 from modules.social_desk import open_social_desk
+from modules.jobs_desk import open_jobs_desk
 from modules.council import open_council
-from modules.events import open_events, get_event_dashboard_summary
 from modules.content import open_content, get_content_dashboard_summary
 from modules.updates_desk import open_updates_desk, get_updates_dashboard_summary
 from modules.planning import PlanningWindow
@@ -63,7 +63,6 @@ POLICY_OPTIONS = {
     "sport": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
     "council": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
     "government": ("Off", "Every 15 minutes", "Every 30 minutes", "Every 60 minutes", "Manual only"),
-    "events": ("Off", "Every 2 hours", "Every 12 hours", "Manual only"),
     "content": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
 }
 
@@ -171,6 +170,11 @@ class Dashboard(ctk.CTkFrame):
         # Retain the widget for scheduler compatibility without displaying it.
         self.next_refresh_label = ctk.CTkLabel(row, text="")
         ctk.CTkButton(
+            row, text="JOBS DESK", width=105,
+            fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
+            command=self._open_jobs_desk,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
             row, text="SOCIAL DESK", width=112,
             fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
             command=self._open_social_desk,
@@ -209,11 +213,6 @@ class Dashboard(ctk.CTkFrame):
                 row=row, column=column, sticky="nsew", padx=6, pady=6
             )
         index = len(MODULE_KEYS)
-        row, column = divmod(index, 4)
-        self._build_events_card(grid).grid(
-            row=row, column=column, sticky="nsew", padx=6, pady=6
-        )
-        index += 1
         row, column = divmod(index, 4)
         self._build_content_card(grid).grid(
             row=row, column=column, sticky="nsew", padx=6, pady=6
@@ -322,6 +321,14 @@ class Dashboard(ctk.CTkFrame):
         track_window_reference(self.module_windows, "updates", module)
         return module
 
+    def _open_jobs_desk(self):
+        existing = self.module_windows.get("jobs")
+        if focus_existing_window(existing):
+            return existing
+        module = open_jobs_desk(self.master)
+        track_window_reference(self.module_windows, "jobs", module)
+        return module
+
     def _open_social_desk(self):
         existing = self.module_windows.get("social")
         if focus_existing_window(existing):
@@ -382,7 +389,7 @@ class Dashboard(ctk.CTkFrame):
             return
         self._run_started_at = datetime.now().astimezone()
         self._run_results = {}
-        for key in ("government", "fire", "council", "police", "sport", "planning", "events", "content"):
+        for key in ("government", "fire", "council", "police", "sport", "planning", "content"):
             self._start_refresh(key)
         self.dashboard_status_label.configure(text="Refreshing modules…", text_color=WARNING)
 
@@ -560,7 +567,7 @@ class Dashboard(ctk.CTkFrame):
 
     def _restore_state(self):
         latest = []
-        for key in (*MODULE_KEYS, "events", "content"):
+        for key in (*MODULE_KEYS, "content"):
             stored = (self.state.get("modules") or {}).get(key, {})
             widgets = self.card_widgets[key]
             count = stored.get("latest_successful_count")
@@ -639,7 +646,7 @@ class Dashboard(ctk.CTkFrame):
             ctk.CTkLabel(self.recent_runs_frame, text="No dashboard refreshes recorded yet.", text_color=TEXT_MUTED, anchor="w").pack(fill="x")
         for run in runs:
             timestamp = datetime.fromisoformat(run["timestamp"]).astimezone().strftime("%d %b %H:%M")
-            values = "   ".join(f"{key.title()} {run.get(key, '—')}" for key in (*MODULE_KEYS, "events", "content", "government"))
+            values = "   ".join(f"{key.title()} {run.get(key, '—')}" for key in (*MODULE_KEYS, "content", "government"))
             ctk.CTkLabel(self.recent_runs_frame, text=f"{timestamp}   {values}   {run.get('status', '').title()}", font=("Arial", 11), text_color=TEXT_SECONDARY, anchor="w").pack(fill="x", pady=2)
 
     def _open_module(self, key):
@@ -820,7 +827,7 @@ class Dashboard(ctk.CTkFrame):
     def _last_successful_times(self):
         state = self.state_store.load()
         output = {}
-        for key in (*MODULE_KEYS, "government", "events", "content"):
+        for key in (*MODULE_KEYS, "government", "content"):
             raw = (state.get("modules") or {}).get(key, {}).get("last_successful_refresh")
             try:
                 output[key] = datetime.fromisoformat(raw) if raw else None
@@ -845,7 +852,7 @@ class Dashboard(ctk.CTkFrame):
         now = datetime.now().astimezone()
         policies = self.state_store.load()["scheduler"]["module_policies"]
         last_times = self._last_successful_times()
-        for key in ("government", "fire", "council", "police", "sport", "planning", "events", "content"):
+        for key in ("government", "fire", "council", "police", "sport", "planning", "content"):
             policy = policies[key]
             if key == "planning":
                 last = last_times.get(key)
@@ -868,8 +875,12 @@ class Dashboard(ctk.CTkFrame):
             self.scheduler_after_id = None
         settings = self.state_store.load()["scheduler"]
         now = datetime.now().astimezone()
+        active_policies = {
+            key: policy for key, policy in settings["module_policies"].items()
+            if key != "events"
+        }
         runs = DashboardScheduler.module_next_runs(
-            now, settings["module_policies"], self._last_successful_times()
+            now, active_policies, self._last_successful_times()
         )
         for key, value in tuple(runs.items()):
             if value is not None and value <= now and self.coordinator.is_running(key):
@@ -891,6 +902,8 @@ class Dashboard(ctk.CTkFrame):
         settings = self.state_store.load()["scheduler"]
         last_times = self._last_successful_times()
         for key, policy in settings["module_policies"].items():
+            if key == "events":
+                continue
             next_run = DashboardScheduler.next_module_run(
                 key, now, last_times.get(key), policy
             )
@@ -926,7 +939,7 @@ class Dashboard(ctk.CTkFrame):
         controls = ctk.CTkFrame(dialog, fg_color="transparent")
         controls.pack(fill="x", padx=35, pady=8)
         menus = {}
-        settings_order=(*MODULE_KEYS, "events", "content", "government")
+        settings_order=(*MODULE_KEYS, "content", "government")
         for row, key in enumerate(settings_order):
             ctk.CTkLabel(controls, text=MODULE_NAMES[key], width=175, anchor="w").grid(row=row, column=0, sticky="w", pady=6)
             menu = ctk.CTkOptionMenu(controls, values=list(POLICY_OPTIONS[key]), width=180)

@@ -24,7 +24,7 @@ from newsdesk.updates.content_gate import has_verified_full_content, is_material
 _active_window = None
 ALL = "All"
 STATUS_LABELS = {ALL: "", "New": STATUS_NEW, "Sent to Social Desk": STATUS_SOCIAL, "Sent to Metricool": STATUS_METRICOOL}
-MODULE_LABELS = {"police": "Police", "fire": "Fire", "sport": "Sport", "council": "Council", "events": "Events", "content": "Local Democracy"}
+MODULE_LABELS = {"police": "Police", "fire": "Fire", "sport": "Sport", "council": "Council", "content": "Local Democracy"}
 
 
 def get_updates_dashboard_summary() -> dict[str, int]:
@@ -289,7 +289,19 @@ class UpdatesDesk(ctk.CTkToplevel):
                 parent=self,
             )
             return
-        draft = add_story_to_social_desk(self, self.selected.story, module_key=self.selected.module_key, updates_item_id=self.selected.item_id)
+        try:
+            draft = add_story_to_social_desk(
+                self, self.selected.story,
+                module_key=self.selected.module_key,
+                updates_item_id=self.selected.item_id,
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Send to Social Desk",
+                f"The item could not be sent to Social Desk.\n\n{exc}",
+                parent=self,
+            )
+            return
         if draft is None: return
         try: self.store.mark_social(self.selected.item_id, draft.draft_id)
         except ValueError as exc: messagebox.showwarning("Updates Desk", str(exc), parent=self)

@@ -111,14 +111,9 @@ def add_story_to_social_desk(
     draft.image_rights_status = _rights_status(image_url, image_credit, module_key)
     draft.source_kind = module_key
     if updates_item_id:
-        existing_origin = str(getattr(draft, "origin_updates_id", "") or "").strip()
-        if existing_origin and existing_origin != updates_item_id:
-            messagebox.showwarning(
-                "Add to Socials",
-                "This social draft is already linked to another Updates Desk item.",
-                parent=parent,
-            )
-            return None
+        # A source URL is the permanent social-draft identity.  If an older
+        # Updates Desk row referred to the same URL, relink the existing draft
+        # to the current row rather than blocking the editorial hand-off.
         draft.origin_updates_id = updates_item_id
     if not draft.publication_datetime:
         draft.publication_datetime = (datetime.now() + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -151,3 +146,7 @@ def add_story_to_social_desk(
 
 
 __all__ = ["add_story_to_social_desk", "social_workflow_status"]
+
+# NewsDesk Reel Builder extension
+from newsdesk.reels.integration import install_selection as _install_reel_selection
+_install_reel_selection(globals())

@@ -102,3 +102,19 @@ data/browser_profiles/
 # Local secrets and environment configuration
 *.key
 *.pem
+
+# Local credentials and runtime data
+data/jobs_local_test_token.txt
+data/jobs_metricool.json
+data/jobs_settings.json
+data/reels/bbc-key.json
+data/reels/bbc-connection-report.json
+data/reels/bbc-last-collection.json
+data/reels/bbc-review.json
+data/reels/auto.json
+data/reels/**/*.jpg
+data/reels/**/*.jpeg
+data/reels/**/*.png
+data/reels/**/*.mp4
+data/release_backups/
+data/reels/

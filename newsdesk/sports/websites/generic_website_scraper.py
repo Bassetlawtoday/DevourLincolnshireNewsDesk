@@ -622,9 +622,9 @@ class GenericWebsiteScraper(BaseScraper):
             published_at = self._parse_publication_datetime(published)
             article_id = str(record.get("article_id") or "").strip()
             if record_type == "news" and article_id:
-                url = urljoin(
+                url = self._pitchero_content_url(
                     base_url,
-                    f"/news/{self._slugify(title)}-{article_id}.html",
+                    f"news/{self._slugify(title)}-{article_id}.html",
                 )
             elif record_type == "match_report":
                 fixture = record.get("fixture") or {}
@@ -632,9 +632,9 @@ class GenericWebsiteScraper(BaseScraper):
                 team_id = str(record.get("team_id") or "").strip()
                 if not fixture_id or not team_id:
                     continue
-                url = urljoin(
+                url = self._pitchero_content_url(
                     base_url,
-                    f"/teams/{team_id}/match-centre/{fixture_id}/report",
+                    f"teams/{team_id}/match-centre/{fixture_id}/report",
                 )
             else:
                 continue
@@ -671,6 +671,35 @@ class GenericWebsiteScraper(BaseScraper):
             if len(stories) >= self.definition.max_stories:
                 break
         return stories
+
+    @staticmethod
+    def _pitchero_content_url(base_url: str, relative_path: str) -> str:
+        """Build a valid official Pitchero news or match-report URL.
+
+        Pitchero-hosted clubs require ``/clubs/<club>/`` in the URL. Custom
+        club domains expose equivalent content from the domain root.
+        """
+
+        parsed = urlparse(base_url)
+        clean_path = str(relative_path or "").strip().lstrip("/")
+        path_parts = [part for part in parsed.path.split("/") if part]
+        hostname = (parsed.hostname or "").casefold()
+        prefix = ""
+        if hostname in {"pitchero.com", "www.pitchero.com"}:
+            try:
+                clubs_index = next(
+                    index
+                    for index, part in enumerate(path_parts)
+                    if part.casefold() == "clubs"
+                )
+            except StopIteration:
+                clubs_index = -1
+            if clubs_index >= 0 and len(path_parts) > clubs_index + 1:
+                prefix = "/" + "/".join(
+                    path_parts[clubs_index : clubs_index + 2]
+                )
+        root = urlunparse((parsed.scheme, parsed.netloc, prefix + "/", "", "", ""))
+        return urljoin(root, clean_path)
 
     def _stories_from_content_api(self, response: ScrapeResponse) -> list[Story]:
         """Build candidates from an optional official listing JSON endpoint."""

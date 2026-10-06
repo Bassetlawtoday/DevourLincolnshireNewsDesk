@@ -12,7 +12,7 @@ from typing import Iterable
 from newsdesk.story import Story
 
 
-ELIGIBLE_MODULES = frozenset({"police", "fire", "sport", "council", "events", "content"})
+ELIGIBLE_MODULES = frozenset({"police", "fire", "sport", "council", "content"})
 STATUS_NEW = "new"
 STATUS_SOCIAL = "sent_to_social_desk"
 STATUS_METRICOOL = "sent_to_metricool"
@@ -159,7 +159,7 @@ class UpdatesStore:
         return inserted
 
     def list_items(self, *, status: str = "", module_key: str = "", query: str = "") -> list[UpdateItem]:
-        clauses = ["deleted=0"]
+        clauses = ["deleted=0", "module_key <> 'events'"]
         values: list[str] = []
         if status:
             clauses.append("status=?"); values.append(status)
@@ -175,7 +175,10 @@ class UpdatesStore:
 
     def summary(self) -> dict[str, int]:
         with self._connect() as connection:
-            rows = connection.execute("SELECT status,COUNT(*) count FROM update_items WHERE deleted=0 GROUP BY status").fetchall()
+            rows = connection.execute(
+                "SELECT status,COUNT(*) count FROM update_items "
+                "WHERE deleted=0 AND module_key <> 'events' GROUP BY status"
+            ).fetchall()
         counts = {row["status"]: int(row["count"]) for row in rows}
         return {"total": sum(counts.values()), "new": counts.get(STATUS_NEW, 0), "social": counts.get(STATUS_SOCIAL, 0), "metricool": counts.get(STATUS_METRICOOL, 0)}
 

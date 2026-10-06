@@ -78,7 +78,6 @@ class DashboardRefreshCoordinator:
             "sport": self._collect_sport,
             "council": self._collect_council,
             "government": self._collect_government,
-            "events": self._collect_events,
             "content": self._collect_content,
         }
 

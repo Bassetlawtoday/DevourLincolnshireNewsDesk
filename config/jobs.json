@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "publications": [
+    {
+      "key": "devour_jobs_lincolnshire",
+      "brand_name": "Devour",
+      "page_name": "Devour Jobs - Lincolnshire",
+      "form_title": "Advertise a vacancy with Devour Jobs - Lincolnshire",
+      "core_areas": [
+        "Lincoln",
+        "North Kesteven",
+        "West Lindsey",
+        "East Lindsey",
+        "Boston",
+        "South Holland",
+        "South Kesteven",
+        "North Lincolnshire",
+        "North East Lincolnshire"
+      ],
+      "allow_outside_area": true,
+      "public_base_url": "https://jobs.newsdeskpro.co.uk",
+      "apply_path": "apply",
+      "timezone": "Europe/London",
+      "currency": "GBP",
+      "metricool_provider": "facebook"
+    }
+  ]
+}

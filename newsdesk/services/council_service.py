@@ -166,6 +166,7 @@ class CouncilCollectionService:
         current = now or datetime.now(timezone.utc)
         sources = [source for source in self.config["sources"] if source.enabled]
         protected_last = {
+            "boston_borough_council": 1,
             "east_lindsey_district_council": 1,
             "north_lincolnshire_council": 2,
         }
@@ -188,6 +189,7 @@ class CouncilCollectionService:
                     f"{source.name}: {health.failures[0] if health.failures else 'source failed'}"
                 )
                 if source.key in {
+                    "boston_borough_council",
                     "east_lindsey_district_council",
                     "north_lincolnshire_council",
                     "south_holland_district_council",

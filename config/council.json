@@ -4,7 +4,7 @@
   "request_timeout_seconds": 25,
   "sources": [
     {"key":"lincolnshire_county_council","name":"Lincolnshire County Council","url":"https://www.lincolnshire.gov.uk/news","enabled":true,"detail_path_patterns":["^/news/article/"]},
-    {"key":"boston_borough_council","name":"Boston Borough Council","url":"https://www.boston.gov.uk/News?p=1","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":"site:boston.gov.uk/article Boston Borough Council"},
+    {"key":"boston_borough_council","name":"Boston Borough Council","url":"https://www.boston.gov.uk/news/","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":""},
     {"key":"east_lindsey_district_council","name":"East Lindsey District Council","url":"https://www.e-lindsey.gov.uk/LatestNews?p=1","enabled":true,"detail_path_patterns":["^/article/\\d+/"],"search_fallback_query":"site:e-lindsey.gov.uk/article East Lindsey District Council"},
     {"key":"city_of_lincoln_council","name":"City of Lincoln Council","url":"https://www.lincoln.gov.uk/news","enabled":true,"detail_path_patterns":["^/news/article/"]},
     {"key":"north_kesteven_district_council","name":"North Kesteven District Council","url":"https://www.n-kesteven.gov.uk/council-news","enabled":true,"detail_path_patterns":["^/council-news/\\d{4}/\\d{2}/"]},

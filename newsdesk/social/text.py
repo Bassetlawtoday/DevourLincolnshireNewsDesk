@@ -122,4 +122,97 @@ def compose_metricool_text(
     return "\n\n".join(part for part in parts if part)
 
 
-__all__ = ["clean_social_text", "compose_metricool_text", "repair_ldrs_draft"]
+BLUESKY_CHARACTER_LIMIT = 300
+
+
+def source_content_is_substantive(title: object, article_text: object) -> bool:
+    """Return True only when the supplied copy is more than a feed teaser."""
+
+    clean_title = clean_social_text(title)
+    clean_article = clean_social_text(article_text)
+    words = re.findall(r"\b[\w’'-]+\b", clean_article)
+    if len(clean_article) < 240 or len(words) < 40:
+        return False
+    if clean_title and clean_article.casefold() == clean_title.casefold():
+        return False
+    return True
+
+
+def compose_bluesky_extract(
+    title: object,
+    article_text: object,
+    *,
+    source_url: str = "",
+    limit: int = BLUESKY_CHARACTER_LIMIT,
+) -> str:
+    """Create a source-only Bluesky extract without generating new claims."""
+
+    clean_title = clean_social_text(title)
+    clean_article = clean_social_text(article_text, source_url=source_url)
+    clean_url = str(source_url or "").strip()
+    if not source_content_is_substantive(clean_title, clean_article):
+        raise ValueError(
+            "A substantive full article is required before Bluesky copy can be created."
+        )
+
+    suffix = f"\n\n{clean_url}" if clean_url else ""
+    available = int(limit) - len(suffix)
+    if available < 40:
+        raise ValueError("The source URL leaves insufficient room for Bluesky copy.")
+
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", clean_article)
+        if len(re.findall(r"\b[\w’'-]+\b", sentence)) >= 8
+    ]
+    candidates: list[str] = []
+    if clean_title:
+        for sentence in sentences:
+            if sentence.casefold() != clean_title.casefold():
+                candidates.append(f"{clean_title}\n\n{sentence}")
+    candidates.extend(sentences)
+    if clean_title:
+        candidates.append(clean_title)
+
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if candidate and len(candidate) <= available:
+            return f"{candidate}{suffix}"
+
+    raise ValueError(
+        "No complete source sentence fits within Bluesky's 300-character limit."
+    )
+
+
+def bluesky_text_is_source_only(
+    bluesky_text: object,
+    title: object,
+    article_text: object,
+    *,
+    source_url: str = "",
+) -> bool:
+    """Verify every editable text block is copied from the supplied source."""
+
+    candidate = clean_social_text(bluesky_text)
+    clean_title = clean_social_text(title)
+    clean_article = clean_social_text(article_text, source_url=source_url)
+    clean_url = str(source_url or "").strip()
+    if not candidate or len(candidate) > BLUESKY_CHARACTER_LIMIT:
+        return False
+    blocks = [block.strip() for block in re.split(r"\n{2,}", candidate) if block.strip()]
+    if clean_url and blocks and blocks[-1] == clean_url:
+        blocks.pop()
+    if not blocks:
+        return False
+    return all(block == clean_title or block in clean_article for block in blocks)
+
+
+__all__ = [
+    "BLUESKY_CHARACTER_LIMIT",
+    "clean_social_text",
+    "bluesky_text_is_source_only",
+    "compose_bluesky_extract",
+    "compose_metricool_text",
+    "repair_ldrs_draft",
+    "source_content_is_substantive",
+]

@@ -12,7 +12,14 @@ import customtkinter as ctk
 from newsdesk.social.metricool import MetricoolClient, MetricoolError, MetricoolImageError
 from newsdesk.social.hashtags import normalise_hashtags, suggest_instagram_hashtags
 from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
-from newsdesk.social.text import clean_social_text, compose_metricool_text, repair_ldrs_draft
+from newsdesk.social.text import (
+    BLUESKY_CHARACTER_LIMIT,
+    bluesky_text_is_source_only,
+    clean_social_text,
+    compose_bluesky_extract,
+    compose_metricool_text,
+    repair_ldrs_draft,
+)
 from newsdesk.theme import (
     ACTION_BLUE, ACTION_BLUE_HOVER, APP_BG, BORDER, BRAND_RED, BRAND_RED_HOVER,
     CARD_BG, HEADER_BG, SUCCESS, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
@@ -94,7 +101,7 @@ class SocialDesk(ctk.CTkToplevel):
         search.bind("<KeyRelease>", lambda _event: self._refresh_list())
         ctk.CTkOptionMenu(
             list_controls,
-            values=["ALL", "LOCAL DEMOCRACY", "EVENTS", "PLANNING", "POLICE", "FIRE", "SPORT", "COUNCIL", "BLANK"],
+            values=["BBC VIDEO", "ALL", "LOCAL DEMOCRACY", "EVENTS", "PLANNING", "POLICE", "FIRE", "SPORT", "COUNCIL", "BLANK"],
             variable=self.draft_filter_var,
             command=lambda _value: self._refresh_list(),
             width=145,
@@ -169,6 +176,38 @@ class SocialDesk(ctk.CTkToplevel):
             hover_color=ACTION_BLUE_HOVER,
             command=self._generate_hashtags,
         ).pack(side="right", anchor="s")
+        bluesky_header = ctk.CTkFrame(form, fg_color="transparent")
+        bluesky_header.pack(fill="x", pady=(12, 0))
+        ctk.CTkLabel(
+            bluesky_header,
+            text="Bluesky draft text (source-only; editable)",
+            text_color=TEXT_SECONDARY,
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True)
+        self.bluesky_counter = ctk.CTkLabel(
+            bluesky_header,
+            text=f"0/{BLUESKY_CHARACTER_LIMIT}",
+            text_color=TEXT_MUTED,
+        )
+        self.bluesky_counter.pack(side="right")
+        self.bluesky_box = ctk.CTkTextbox(
+            form,
+            height=100,
+            fg_color=CARD_BG,
+            border_width=1,
+            border_color=BORDER,
+            text_color=TEXT_PRIMARY,
+        )
+        self.bluesky_box.pack(fill="x", pady=(3, 0))
+        self.bluesky_box.bind("<KeyRelease>", lambda _event: self._update_bluesky_counter())
+        ctk.CTkButton(
+            form,
+            text="REGENERATE SOURCE-ONLY BLUESKY COPY",
+            width=270,
+            fg_color=ACTION_BLUE,
+            hover_color=ACTION_BLUE_HOVER,
+            command=self._generate_bluesky,
+        ).pack(anchor="w", pady=(6, 0))
         schedule = ctk.CTkFrame(form, fg_color="transparent")
         schedule.pack(fill="x", pady=(14, 0))
         self.date_entry = self._entry(schedule, "Metricool draft date/time (YYYY-MM-DD HH:MM)", side=True)
@@ -205,7 +244,7 @@ class SocialDesk(ctk.CTkToplevel):
         for child in self.list_frame.winfo_children(): child.destroy()
         query = self.draft_search_var.get().strip().casefold()
         selected_source = self.draft_filter_var.get().strip().upper()
-        source_labels = {
+        source_labels = {"bbc": "BBC VIDEO", 
             "content": "LOCAL DEMOCRACY", "events": "EVENTS",
             "planning": "PLANNING", "police": "POLICE", "fire": "FIRE",
             "sport": "SPORT", "council": "COUNCIL", "blank": "BLANK",
@@ -280,6 +319,9 @@ class SocialDesk(ctk.CTkToplevel):
             hashtags = suggest_instagram_hashtags(draft.title, draft.text)
             draft.instagram_hashtags = hashtags
         self.hashtag_entry.delete(0, "end"); self.hashtag_entry.insert(0, hashtags)
+        self.bluesky_box.delete("1.0", "end")
+        self.bluesky_box.insert("1.0", getattr(draft, "bluesky_text", ""))
+        self._update_bluesky_counter()
         for value, variable in self.network_vars.items(): variable.set(value in draft.providers)
         self.important_var.set(bool(getattr(draft, "important", False)))
         self.rights_var.set(draft.image_rights_status == "approved")
@@ -293,6 +335,36 @@ class SocialDesk(ctk.CTkToplevel):
     def _network_changed(self):
         if self.network_vars["instagram"].get() and not self.hashtag_entry.get().strip():
             self._generate_hashtags()
+        if self.network_vars["bluesky"].get() and not self.bluesky_box.get("1.0", "end").strip():
+            self._generate_bluesky(show_error=False)
+
+    def _update_bluesky_counter(self):
+        count = len(self.bluesky_box.get("1.0", "end-1c"))
+        self.bluesky_counter.configure(
+            text=f"{count}/{BLUESKY_CHARACTER_LIMIT}",
+            text_color=BRAND_RED if count > BLUESKY_CHARACTER_LIMIT else TEXT_MUTED,
+        )
+
+    def _generate_bluesky(self, show_error=True):
+        try:
+            value = compose_bluesky_extract(
+                self.title_entry.get().strip(),
+                self.text_box.get("1.0", "end").strip(),
+                source_url=self.source_entry.get().strip(),
+            )
+        except ValueError as exc:
+            self.editor_status.configure(text=str(exc), text_color=BRAND_RED)
+            if show_error:
+                messagebox.showwarning("Bluesky draft", str(exc), parent=self)
+            return False
+        self.bluesky_box.delete("1.0", "end")
+        self.bluesky_box.insert("1.0", value)
+        self._update_bluesky_counter()
+        self.editor_status.configure(
+            text="Source-only Bluesky copy created. Review it before sending.",
+            text_color=SUCCESS,
+        )
+        return True
 
     def _generate_hashtags(self):
         tags = suggest_instagram_hashtags(
@@ -339,6 +411,7 @@ class SocialDesk(ctk.CTkToplevel):
         draft.providers = [value for value, variable in self.network_vars.items() if variable.get()]
         draft.important = bool(self.important_var.get())
         draft.instagram_hashtags = normalise_hashtags(self.hashtag_entry.get())
+        draft.bluesky_text = self.bluesky_box.get("1.0", "end").strip()
         raw = self.date_entry.get().strip().replace(" ", "T")
         draft.publication_datetime = raw + (":00" if len(raw) == 16 else "")
         draft.timezone = self.timezone_entry.get().strip() or "Europe/London"
@@ -367,6 +440,21 @@ class SocialDesk(ctk.CTkToplevel):
             messagebox.showwarning("Social Desk", "Post text and at least one network are required.", parent=self); return
         if "instagram" in draft.providers and not (draft.image_url or draft.local_image_path):
             messagebox.showwarning("Social Desk", "Instagram requires an image.", parent=self); return
+        if "bluesky" in draft.providers:
+            if not draft.bluesky_text and not self._generate_bluesky():
+                return
+            draft.bluesky_text = self.bluesky_box.get("1.0", "end").strip()
+            if not draft.bluesky_text:
+                messagebox.showwarning("Social Desk", "Create and review the Bluesky draft text first.", parent=self); return
+            if len(draft.bluesky_text) > BLUESKY_CHARACTER_LIMIT:
+                messagebox.showwarning("Social Desk", f"The Bluesky version is {len(draft.bluesky_text)} characters. Reduce it to 300 or fewer.", parent=self); return
+            if not bluesky_text_is_source_only(
+                draft.bluesky_text,
+                draft.title,
+                draft.text,
+                source_url=draft.source_url if draft.include_source_url else "",
+            ):
+                messagebox.showwarning("Social Desk", "The Bluesky version must contain only the unchanged headline, exact source sentences and source URL. Regenerate it before sending.", parent=self); return
         has_image = bool(draft.image_url or draft.local_image_path)
         if has_image and not draft.image_credit:
             messagebox.showwarning("Social Desk", "Add the required image credit before sending this image.", parent=self); return
@@ -395,6 +483,8 @@ class SocialDesk(ctk.CTkToplevel):
             messagebox.showwarning("Metricool profiles", f"These networks are not connected to the verified Metricool brand: {', '.join(unavailable)}.", parent=self); return
         self.send_button.configure(state="disabled", text="SENDING DRAFT...")
         def worker():
+            regular_result = {}
+            bluesky_result = {}
             try:
                 social_text = compose_metricool_text(
                     draft.text,
@@ -404,32 +494,37 @@ class SocialDesk(ctk.CTkToplevel):
                     instagram_hashtags=draft.instagram_hashtags if "instagram" in draft.providers else "",
                 )
                 client = MetricoolClient(token=settings["token"], user_id=settings["user_id"], blog_id=settings["blog_id"])
-                result = client.create_draft(text=social_text, providers=draft.providers, publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url, image_path=draft.local_image_path)
-                note_warning = ""
+                regular_providers = [value for value in draft.providers if value != "bluesky"]
+                if regular_providers:
+                    regular_result = ({"id": draft.metricool_id} if draft.metricool_id else client.create_draft(text=social_text, providers=regular_providers, publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url, image_path=draft.local_image_path))
+                if "bluesky" in draft.providers:
+                    bluesky_result = ({"id": draft.bluesky_metricool_id} if draft.bluesky_metricool_id else client.create_draft(text=draft.bluesky_text, providers=["bluesky"], publication_datetime=draft.publication_datetime, timezone=draft.timezone, image_url=draft.image_url, image_path=draft.local_image_path))
+                note_warnings = []
                 if draft.important:
-                    post_id = MetricoolClient.draft_id(result)
-                    try:
-                        client.add_private_note(post_id, f"IMPORTANT — PRIORITY REVIEW\n{draft.title}")
-                    except Exception as exc:
-                        note_warning = str(exc)
-                self.after(0, lambda: self._sent(result, note_warning))
+                    for post_id in filter(None, (MetricoolClient.draft_id(regular_result), MetricoolClient.draft_id(bluesky_result))):
+                        try:
+                            client.add_private_note(post_id, f"IMPORTANT — PRIORITY REVIEW\n{draft.title}")
+                        except Exception as exc:
+                            note_warnings.append(str(exc))
+                results = {"regular": regular_result, "bluesky": bluesky_result}
+                warning = "; ".join(note_warnings)
+                self.after(0, lambda: self._sent(results, warning))
             except MetricoolImageError as exc:
-                self.after(0, lambda detail=str(exc): self._image_send_failed(detail))
+                self.after(0, lambda detail=str(exc), regular=regular_result, bluesky=bluesky_result: self._partial_send_failed(regular, bluesky, detail, image_error=True))
             except Exception as exc:
-                self.after(0, lambda detail=str(exc): self._send_failed(detail))
+                self.after(0, lambda detail=str(exc), regular=regular_result, bluesky=bluesky_result: self._partial_send_failed(regular, bluesky, detail))
         threading.Thread(target=worker, daemon=True).start()
 
     def _sent(self, result, note_warning=""):
         self.current.status = "Sent to Metricool as draft"
-        self.current.metricool_id = MetricoolClient.draft_id(result)
+        regular_id = MetricoolClient.draft_id(result.get("regular", {}))
+        bluesky_id = MetricoolClient.draft_id(result.get("bluesky", {}))
+        self.current.bluesky_metricool_id = bluesky_id
+        self.current.metricool_id = regular_id or bluesky_id
         self.current.updated_at = datetime.now().astimezone().isoformat()
         self.store.save(self.drafts); self._refresh_list(); self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
-        if str(getattr(self.current, "origin_updates_id", "") or "").strip():
-            from newsdesk.updates.store import UpdatesStore
-            UpdatesStore().mark_metricool(
-                self.current.origin_updates_id, self.current.metricool_id
-            )
-        reference = f" ID {self.current.metricool_id}." if self.current.metricool_id else "."
+        references = [value for value in (regular_id, bluesky_id) if value]
+        reference = f" IDs {', '.join(references)}." if references else "."
         if note_warning:
             self.editor_status.configure(text=f"Draft delivered to Metricool{reference} IMPORTANT remains marked locally, but Metricool could not add its private note: {note_warning}", text_color=BRAND_RED)
         else:
@@ -439,6 +534,25 @@ class SocialDesk(ctk.CTkToplevel):
     def _send_failed(self, detail):
         self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
         messagebox.showerror("Metricool", detail, parent=self)
+
+    def _partial_send_failed(self, regular_result, bluesky_result, detail, image_error=False):
+        regular_id = MetricoolClient.draft_id(regular_result)
+        bluesky_id = MetricoolClient.draft_id(bluesky_result)
+        if regular_id:
+            self.current.metricool_id = regular_id
+        if bluesky_id:
+            self.current.bluesky_metricool_id = bluesky_id
+            if not self.current.metricool_id:
+                self.current.metricool_id = bluesky_id
+        self.store.save(self.drafts)
+        if regular_id or bluesky_id:
+            self.send_button.configure(state="normal", text="RETRY MISSING METRICOOL DRAFT")
+            completed = " and ".join(name for name, identifier in (("standard", regular_id), ("Bluesky", bluesky_id)) if identifier)
+            messagebox.showerror("Metricool partial delivery", f"The {completed} draft was saved successfully. The missing draft was not created:\n\n{detail}\n\nRetry will send only the missing draft.", parent=self)
+        elif image_error:
+            self._image_send_failed(detail)
+        else:
+            self._send_failed(detail)
 
     def _image_send_failed(self, detail):
         self.send_button.configure(state="normal", text="SEND TO METRICOOL AS DRAFT")
@@ -534,3 +648,7 @@ class SocialDesk(ctk.CTkToplevel):
 
 def open_social_desk(master):
     return SocialDesk(master)
+
+# NewsDesk Reel Builder extension
+from newsdesk.reels.integration import install_social_desk as _install_reels
+_install_reels(SocialDesk)
