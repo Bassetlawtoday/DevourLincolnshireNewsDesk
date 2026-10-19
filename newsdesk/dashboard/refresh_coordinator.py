@@ -72,9 +72,7 @@ class DashboardRefreshCoordinator:
         self.latest_government_result = None
         self.government_hours = 48
         self.collectors = collectors or {
-            "planning": self._collect_planning,
             "police": self._collect_police,
-            "fire": self._collect_fire,
             "sport": self._collect_sport,
             "council": self._collect_council,
             "government": self._collect_government,
@@ -86,6 +84,8 @@ class DashboardRefreshCoordinator:
             return module_key in self._running
 
     def refresh_module(self, module_key: str) -> DashboardRefreshResult | None:
+        if module_key not in self.collectors or module_key not in MODULE_NAMES:
+            raise ValueError(f"Module is not active: {module_key}")
         with self._lock:
             if module_key in self._running:
                 return None
@@ -107,7 +107,7 @@ class DashboardRefreshCoordinator:
             result.item_keys = self.item_keys(module_key, payload)
             result.updates_date = result.completed_at.astimezone().date().isoformat()
         if result.success and payload is not None:
-            if module_key in {"police", "fire", "sport", "council"}:
+            if module_key in {"police", "sport", "council"}:
                 try:
                     from newsdesk.updates.store import UpdatesStore
                     UpdatesStore().ingest(
