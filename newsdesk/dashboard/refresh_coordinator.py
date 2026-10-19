@@ -107,18 +107,15 @@ class DashboardRefreshCoordinator:
             result.item_keys = self.item_keys(module_key, payload)
             result.updates_date = result.completed_at.astimezone().date().isoformat()
         if result.success and payload is not None:
-            if module_key in {"police", "sport", "council"}:
+            if module_key in {"police", "sport", "council", "content"}:
                 try:
-                    from newsdesk.updates.store import UpdatesStore
-                    UpdatesStore().ingest(
-                        module_key, payload.get("stories") or []
-                    )
+                    self._stage_new_social_drafts(module_key, payload)
                 except Exception:
-                    # Updates Desk is an auxiliary review queue.  A storage
-                    # problem must never turn a successful source refresh into
-                    # a Police/Fire/Sport/Council failure.
+                    # Social Desk is an editorial staging queue. A local draft
+                    # storage problem must not turn a successful source refresh
+                    # into a source failure.
                     LOGGER.exception(
-                        "Could not add %s refresh to Updates Desk", module_key
+                        "Could not stage %s refresh in Social Desk", module_key
                     )
             if module_key == "planning":
                 try:
@@ -134,6 +131,34 @@ class DashboardRefreshCoordinator:
             )
         self.record_result(result)
         return result
+
+    def _stage_new_social_drafts(self, module_key: str, payload: dict) -> int:
+        """Stage only newly discovered stories, without overwriting editors."""
+        from newsdesk.social.selection import stage_story_for_social_desk
+
+        stories = payload.get("stage_stories")
+        if stories is None:
+            all_stories = list(payload.get("stories") or [])
+            state = self.state_store.load()
+            previous = (state.get("modules") or {}).get(module_key, {})
+            known = set(previous.get("known_item_keys") or ())
+            # The first successful refresh establishes a baseline. This avoids
+            # flooding Social Desk with the complete historical source archive.
+            if not known:
+                return 0
+            stories = [
+                story for story in all_stories
+                if not set(self.item_keys(module_key, {"stories": [story]})) <= known
+            ]
+
+        created = 0
+        for story in stories:
+            _draft, was_created = stage_story_for_social_desk(
+                story, module_key=module_key, update_existing=False
+            )
+            created += int(was_created)
+        payload["social_drafts_staged"] = created
+        return created
 
     def record_result(self, result: DashboardRefreshResult) -> None:
         with self._lock:
@@ -328,20 +353,75 @@ class DashboardRefreshCoordinator:
         from contentdesk.collector import ContentExplorerCollector
         from contentdesk.config import load_api_key
         from contentdesk.storage import ContentStore
+        from modules.content import _story_from_row, get_current_content_stories
+        from newsdesk.updates.content_gate import has_verified_full_content
+
         key = load_api_key()
         if not key:
             raise RuntimeError("LDRS API key is not configured")
-        with ContentExplorerCollector(key) as collector:
-            rows = collector.collect_listings(limit=100)
+
         store = ContentStore()
         run_id = store.start_run("Latest 100")
+        rows = []
+        stored = 0
+        stage_stories = []
         try:
-            stored = store.upsert_many(rows)
-            store.finish_run(run_id, discovered=len(rows), stored=stored, status="success")
+            with ContentExplorerCollector(key) as collector:
+                rows = collector.collect_listings(limit=100)
+                existing = []
+                new_listings = []
+                for listing in rows:
+                    article_id = str(listing.get("article_id") or "").strip()
+                    if article_id and store.get(article_id) is None:
+                        new_listings.append(listing)
+                    else:
+                        existing.append(listing)
+
+                # Existing listing metadata may be refreshed safely. New rows
+                # are persisted only after their complete article downloads.
+                stored += store.upsert_many(existing)
+                for listing in new_listings:
+                    article_id = str(listing.get("article_id") or "").strip()
+                    try:
+                        detail = collector.fetch_detail(article_id)
+                        complete = {**listing, **detail}
+                        for field in ("authorities", "categories"):
+                            if not complete.get(field):
+                                complete[field] = listing.get(field) or []
+                        if not str(complete.get("body") or "").strip():
+                            raise RuntimeError("LDRS full article body was empty")
+                        stored += store.upsert_many([complete])
+                        stored_row = store.get(article_id)
+                        if stored_row is None:
+                            raise RuntimeError("LDRS full article was not stored")
+                        story = _story_from_row(stored_row)
+                        if not has_verified_full_content("content", story):
+                            raise RuntimeError("LDRS article did not pass the full-content check")
+                        stage_stories.append(story)
+                    except Exception:
+                        LOGGER.exception(
+                            "Could not download complete LDRS article %s; it was not staged",
+                            article_id,
+                        )
+            store.finish_run(
+                run_id, discovered=len(rows), stored=stored, status="success"
+            )
         except Exception as exc:
-            store.finish_run(run_id, discovered=0, stored=0, status="failed", message=str(exc))
+            store.finish_run(
+                run_id,
+                discovered=len(rows),
+                stored=stored,
+                status="failed",
+                message=str(exc),
+            )
             raise
-        from modules.content import get_current_content_stories
-        from newsdesk.updates.store import UpdatesStore
-        UpdatesStore().ingest("content", get_current_content_stories())
-        return int(store.summary()["count"]), {"stored": stored, "discovered": len(rows), "scope": "Latest 100"}
+
+        all_stories = get_current_content_stories()
+        return int(store.summary()["count"]), {
+            "stored": stored,
+            "discovered": len(rows),
+            "scope": "Latest 100",
+            "stories": all_stories,
+            "stage_stories": stage_stories,
+        }
+
