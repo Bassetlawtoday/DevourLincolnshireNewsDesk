@@ -94,7 +94,9 @@ class SocialDraft:
     timezone: str = "Europe/London"
     status: str = "local draft"
     metricool_id: str = ""
-    # Permanent link back to the central Updates Desk queue.
+    # Stable collector identity used to prevent repeat staging across refreshes.
+    source_identity: str = ""
+    # Retained for backwards compatibility with drafts created by Updates Desk.
     origin_updates_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -122,6 +124,15 @@ class SocialDraftStore:
     @staticmethod
     def normalise_url(value: str) -> str:
         return str(value or "").strip().rstrip("/").casefold()
+
+    def find_by_source_identity(self, drafts: list[SocialDraft], identity: str) -> SocialDraft | None:
+        wanted = str(identity or "").strip().casefold()
+        if not wanted:
+            return None
+        return next(
+            (item for item in drafts if str(item.source_identity or "").strip().casefold() == wanted),
+            None,
+        )
 
     def find_by_source_url(self, drafts: list[SocialDraft], source_url: str) -> SocialDraft | None:
         wanted = self.normalise_url(source_url)
