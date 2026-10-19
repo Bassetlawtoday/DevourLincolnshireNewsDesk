@@ -20,11 +20,7 @@ class DashboardModuleDefinition:
 
 
 MODULE_DEFINITIONS = (
-    DashboardModuleDefinition(
-        "planning", "Planning Intelligence", "heavy", planning_special=True
-    ),
     DashboardModuleDefinition("police", "Police Intelligence", "heavy"),
-    DashboardModuleDefinition("fire", "Fire Intelligence", "light"),
     DashboardModuleDefinition("sport", "Sport Intelligence", "heavy"),
     DashboardModuleDefinition(
         "council",
