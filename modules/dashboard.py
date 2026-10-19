@@ -57,9 +57,7 @@ WARNING = "#f59e0b"
 BORDER = "#334155"
 MODULE_KEYS = CARD_MODULE_KEYS
 POLICY_OPTIONS = {
-    "planning": ("Off", "Daily", "Every 12 hours", "Manual only"),
     "police": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
-    "fire": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
     "sport": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
     "council": ("Off", "Every 30 minutes", "Every 60 minutes", "Every 2 hours", "Manual only"),
     "government": ("Off", "Every 15 minutes", "Every 30 minutes", "Every 60 minutes", "Manual only"),
@@ -307,7 +305,7 @@ class Dashboard(ctk.CTkFrame):
         card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
         ctk.CTkLabel(card, text="Updates Desk", font=("Arial", 16, "bold"), text_color=TEXT_PRIMARY, anchor="w").pack(fill="x", padx=17, pady=(16, 8))
         ctk.CTkLabel(card, text=f"{summary['new']:,} new", font=("Arial", 30, "bold"), text_color=TEXT_PRIMARY, anchor="w").pack(fill="x", padx=17)
-        ctk.CTkLabel(card, text="All refreshed modules except Planning", font=("Arial", 12), text_color=TEXT_MUTED, anchor="w").pack(fill="x", padx=17, pady=(2, 7))
+        ctk.CTkLabel(card, text="Council, Police, Sport and Local Democracy updates", font=("Arial", 12), text_color=TEXT_MUTED, anchor="w").pack(fill="x", padx=17, pady=(2, 7))
         ctk.CTkLabel(card, text=f"{summary['social']:,} sent to Social Desk", font=("Arial", 11), text_color=ACCENT if summary['social'] else TEXT_MUTED, anchor="w").pack(fill="x", padx=17)
         ctk.CTkLabel(card, text=f"{summary['metricool']:,} sent to Metricool", font=("Arial", 12, "bold"), text_color=SUCCESS if summary['metricool'] else TEXT_MUTED, anchor="w").pack(fill="x", padx=17, pady=(5, 12))
         ctk.CTkButton(card, text="OPEN", height=34, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER, command=self._open_updates_desk).pack(fill="x", padx=17, pady=(0, 16))
@@ -389,7 +387,7 @@ class Dashboard(ctk.CTkFrame):
             return
         self._run_started_at = datetime.now().astimezone()
         self._run_results = {}
-        for key in ("government", "fire", "council", "police", "sport", "planning", "content"):
+        for key in ("government", "council", "police", "sport", "content"):
             self._start_refresh(key)
         self.dashboard_status_label.configure(text="Refreshing modules…", text_color=WARNING)
 
@@ -607,17 +605,7 @@ class Dashboard(ctk.CTkFrame):
                 widgets["updated"].configure(text=f"Last updated: {parsed.strftime('%d %b %H:%M')}")
         if latest:
             self.refresh_time_label.configure(text=f"Last successful dashboard refresh: {max(latest).strftime('%d %b %Y %H:%M')}")
-        cached = self.result_repository.get_result("planning")
-        if cached is not None:
-            payload = cached.payload
-            count = int(payload.get("count") or 0)
-            widgets = self.card_widgets["planning"]
-            widgets["count"].configure(text=f"{count} results")
-            widgets["status"].configure(
-                text="Completed — cached Planning data available",
-                text_color=SUCCESS,
-            )
-        for key in ("police", "fire", "sport", "council"):
+        for key in ("police", "sport", "council"):
             cached_feed = self.result_repository.get_result(key)
             if cached_feed is None:
                 continue
@@ -852,15 +840,8 @@ class Dashboard(ctk.CTkFrame):
         now = datetime.now().astimezone()
         policies = self.state_store.load()["scheduler"]["module_policies"]
         last_times = self._last_successful_times()
-        for key in ("government", "fire", "council", "police", "sport", "planning", "content"):
+        for key in ("government", "council", "police", "sport", "content"):
             policy = policies[key]
-            if key == "planning":
-                last = last_times.get(key)
-                if last and last.astimezone().date() == now.date():
-                    self.card_widgets[key]["change"].configure(text="Already refreshed today")
-                    self.card_widgets[key]["status"].configure(
-                        text="Previous-session count — payload unavailable", text_color=WARNING
-                    )
             stale = DashboardScheduler.startup_refresh_required(
                 key, now, last_times.get(key), policy,
                 self.result_repository.has_result(key),
@@ -877,7 +858,7 @@ class Dashboard(ctk.CTkFrame):
         now = datetime.now().astimezone()
         active_policies = {
             key: policy for key, policy in settings["module_policies"].items()
-            if key != "events"
+            if key in {*MODULE_KEYS, "government", "content"}
         }
         runs = DashboardScheduler.module_next_runs(
             now, active_policies, self._last_successful_times()
@@ -901,8 +882,9 @@ class Dashboard(ctk.CTkFrame):
         now = datetime.now().astimezone()
         settings = self.state_store.load()["scheduler"]
         last_times = self._last_successful_times()
+        active_keys = {*MODULE_KEYS, "government", "content"}
         for key, policy in settings["module_policies"].items():
-            if key == "events":
+            if key not in active_keys:
                 continue
             next_run = DashboardScheduler.next_module_run(
                 key, now, last_times.get(key), policy
@@ -946,12 +928,7 @@ class Dashboard(ctk.CTkFrame):
             menu.set(policies[key]["mode"])
             menu.grid(row=row, column=1, padx=8, pady=6)
             menus[key] = menu
-        planning_row = len(settings_order)
-        ctk.CTkLabel(controls, text="Planning preferred time", width=175, anchor="w").grid(row=planning_row, column=0, sticky="w", pady=6)
-        daily_time = ctk.CTkEntry(controls, width=90)
-        daily_time.insert(0, policies["planning"].get("daily_time", "06:15"))
-        daily_time.grid(row=planning_row, column=1, sticky="w", padx=8, pady=6)
-        heavy_row=planning_row+1
+        heavy_row = len(settings_order)
         ctk.CTkLabel(controls, text="Maximum heavy collectors", width=175, anchor="w").grid(row=heavy_row, column=0, sticky="w", pady=6)
         heavy_limit_menu = ctk.CTkOptionMenu(
             controls, values=["1", "2", "3"], width=90
@@ -961,13 +938,8 @@ class Dashboard(ctk.CTkFrame):
         error = ctk.CTkLabel(dialog, text="", text_color=ACCENT)
         error.pack()
         def save_settings():
-            preferred = daily_time.get().strip()
-            if not DashboardScheduler.validate_fixed_time(preferred):
-                error.configure(text="Planning time must use 24-hour HH:MM, for example 06:15.")
-                return
             for key, menu in menus.items():
                 self.state["scheduler"]["module_policies"][key]["mode"] = menu.get()
-            self.state["scheduler"]["module_policies"]["planning"]["daily_time"] = preferred
             self.state["scheduler"]["refresh_on_startup"] = startup.get()
             self.state["scheduler"]["max_heavy_collectors"] = int(
                 heavy_limit_menu.get()
