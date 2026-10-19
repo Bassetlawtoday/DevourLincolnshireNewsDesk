@@ -12,7 +12,7 @@ from typing import Iterable
 from newsdesk.story import Story
 
 
-ELIGIBLE_MODULES = frozenset({"police", "fire", "sport", "council", "content"})
+ELIGIBLE_MODULES = frozenset({"police", "sport", "council", "content"})
 STATUS_NEW = "new"
 STATUS_SOCIAL = "sent_to_social_desk"
 STATUS_METRICOOL = "sent_to_metricool"
