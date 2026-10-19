@@ -1,8 +1,9 @@
-"""Shared direct Add to Social Desk action for NewsDesk modules."""
+"""Shared direct Social Desk staging for NewsDesk modules."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import hashlib
 from tkinter import messagebox
 
 from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
@@ -48,6 +49,20 @@ def _add_ldrs_author_credit(text: str, author: str) -> str:
     return f"{byline}\n\n{clean_text}".strip()
 
 
+def _story_identity(story, module_key: str) -> str:
+    """Return a permanent, non-public identity for refresh deduplication."""
+    parts = (
+        module_key,
+        getattr(story, "story_id", ""),
+        getattr(story, "url", ""),
+        getattr(story, "source", ""),
+        getattr(story, "title", ""),
+        getattr(story, "published", ""),
+    )
+    normalised = "|".join(" ".join(str(value or "").split()).casefold() for value in parts)
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
 def social_workflow_status(story) -> str:
     """Return the persisted Social Desk stage for a newsroom story."""
     source_url = str(getattr(story, "url", "") or "").strip()
@@ -65,10 +80,18 @@ def social_workflow_status(story) -> str:
     return "SENT TO METRICOOL" if delivered else "SENT TO SOCIAL DESK"
 
 
-def add_story_to_social_desk(
-    parent, story, *, module_key: str, updates_item_id: str = ""
-) -> SocialDraft | None:
-    """Stage a Story directly in Social Desk without using Newsletter Desk."""
+def stage_story_for_social_desk(
+    story,
+    *,
+    module_key: str,
+    updates_item_id: str = "",
+    update_existing: bool = False,
+) -> tuple[SocialDraft, bool]:
+    """Persist one local Social Desk draft without opening any UI.
+
+    Returns a draft and a created flag. Automated refreshes leave an existing
+    draft untouched so editorial changes cannot be overwritten.
+    """
 
     title = str(getattr(story, "title", "") or "").strip()
     source_url = str(getattr(story, "url", "") or "").strip()
@@ -81,50 +104,67 @@ def add_story_to_social_desk(
         attribution = f"Posted by {author}"
         if attribution.casefold() not in text.casefold():
             text = f"{text}\n\n{attribution}".strip()
-    image_url = _real_image(getattr(story, "image_url", ""))
-    image_caption = str(getattr(story, "image_caption", "") or getattr(story, "image_alt_text", "") or "").strip() if image_url else ""
-    image_credit = str(getattr(story, "image_credit", "") or "").strip() if image_url else ""
     if not title or not text:
-        messagebox.showwarning(
-            "Add to Socials",
-            "The selected content needs a title and text before it can be staged.",
-            parent=parent,
-        )
-        return None
-    settings = SocialSettingsStore().load()
+        raise ValueError("The content needs a title and text before it can be staged.")
+
+    identity = _story_identity(story, module_key)
     store = SocialDraftStore()
     drafts = store.load()
-    draft = store.find_by_source_url(drafts, source_url) or SocialDraft()
-    existed = any(item.draft_id == draft.draft_id for item in drafts)
+    draft = (
+        store.find_by_source_identity(drafts, identity)
+        or store.find_by_source_url(drafts, source_url)
+    )
+    existed = draft is not None
+    if existed and not update_existing:
+        return draft, False
+    draft = draft or SocialDraft()
+
+    image_url = _real_image(getattr(story, "image_url", ""))
+    image_caption = (
+        str(
+            getattr(story, "image_caption", "")
+            or getattr(story, "image_alt_text", "")
+            or ""
+        ).strip()
+        if image_url
+        else ""
+    )
+    image_credit = (
+        str(getattr(story, "image_credit", "") or "").strip() if image_url else ""
+    )
+    # Unknown image ownership must not stop the story entering Social Desk.
+    # Stage the copy without that image; an editor may add an approved image.
+    if image_url and not image_credit:
+        image_url = ""
+        image_caption = ""
+
+    settings = SocialSettingsStore().load()
     draft.title = title
     draft.text = text
+    draft.source_identity = identity
     draft.source_url = source_url
-    # LDRS Content Explorer URLs require newsroom authentication and are not
-    # suitable public links. Keep them for provenance/deduplication only.
     draft.include_source_url = module_key != "content"
     if module_key == "content":
         draft.internal_source_url = source_url
         draft.source_url = ""
     draft.image_url = image_url
     draft.image_caption = image_caption
-    draft.image_credit = image_credit
-    draft.image_rights_status = _rights_status(image_url, image_credit, module_key)
+    draft.image_credit = image_credit if image_url else ""
+    draft.image_rights_status = _rights_status(
+        draft.image_url, draft.image_credit, module_key
+    )
     draft.source_kind = module_key
     if updates_item_id:
-        # A source URL is the permanent social-draft identity.  If an older
-        # Updates Desk row referred to the same URL, relink the existing draft
-        # to the current row rather than blocking the editorial hand-off.
         draft.origin_updates_id = updates_item_id
     if not draft.publication_datetime:
-        draft.publication_datetime = (datetime.now() + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%S")
+        draft.publication_datetime = (
+            datetime.now() + timedelta(minutes=20)
+        ).strftime("%Y-%m-%dT%H:%M:%S")
     draft.timezone = draft.timezone or settings.get("timezone") or "Europe/London"
     draft.status = {
         "content": "Local Democracy draft",
-        "events": "Events draft",
         "newsletter": "Newsletter selection draft",
-        "planning": "Planning draft",
         "police": "Police draft",
-        "fire": "Fire draft",
         "sport": "Sport draft",
         "council": "Council draft",
     }.get(module_key, "Blank social draft")
@@ -135,17 +175,39 @@ def add_story_to_social_desk(
     if not existed:
         drafts.append(draft)
     store.save(drafts)
+    return draft, not existed
+
+
+def add_story_to_social_desk(
+    parent, story, *, module_key: str, updates_item_id: str = ""
+) -> SocialDraft | None:
+    """Stage a selected Story in Social Desk and report the UI result."""
+    try:
+        draft, created = stage_story_for_social_desk(
+            story,
+            module_key=module_key,
+            updates_item_id=updates_item_id,
+            update_existing=True,
+        )
+    except ValueError as exc:
+        messagebox.showwarning("Add to Socials", str(exc), parent=parent)
+        return None
     _show_sent_status(parent)
     messagebox.showinfo(
         "Added to Socials",
         "The existing social draft was updated without creating a duplicate."
-        if existed else "The content, source link and available source image have been staged for social media.",
+        if not created
+        else "The content, source link and any credited source image have been staged for social media.",
         parent=parent,
     )
     return draft
 
 
-__all__ = ["add_story_to_social_desk", "social_workflow_status"]
+__all__ = [
+    "add_story_to_social_desk",
+    "social_workflow_status",
+    "stage_story_for_social_desk",
+]
 
 # NewsDesk Reel Builder extension
 from newsdesk.reels.integration import install_selection as _install_reel_selection
