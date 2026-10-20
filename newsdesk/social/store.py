@@ -6,7 +6,7 @@ import base64
 import ctypes
 from ctypes import wintypes
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -121,6 +121,24 @@ class SocialDraftStore:
     def save(self, drafts: list[SocialDraft]) -> None:
         _atomic_json(self.path, {"schema_version": 2, "drafts": [asdict(item) for item in drafts]})
 
+    def purge_older_than(self, days: int = 7, *, now: datetime | None = None) -> int:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff = current - timedelta(days=days)
+        drafts = self.load()
+        kept = []
+        for draft in drafts:
+            try:
+                stamp = datetime.fromisoformat(str(draft.created_at).replace("Z", "+00:00"))
+                stamp = stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                stamp = current
+            if stamp >= cutoff:
+                kept.append(draft)
+        removed = len(drafts) - len(kept)
+        if removed:
+            self.save(kept)
+        return removed
+
     @staticmethod
     def normalise_url(value: str) -> str:
         return str(value or "").strip().rstrip("/").casefold()
@@ -148,6 +166,35 @@ class SocialDraftStore:
             ),
             None,
         )
+
+
+class SocialHandoffStore:
+    """Content-free record of stories already handed to Social Desk."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or SOCIAL_DIR / "handoffs.json"
+
+    def load(self) -> dict[str, dict[str, str]]:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            rows = payload.get("handoffs", {})
+            return rows if isinstance(rows, dict) else {}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {}
+
+    def contains(self, identity: str) -> bool:
+        return bool(identity and identity.casefold() in self.load())
+
+    def mark(self, identity: str, module_key: str) -> None:
+        key = str(identity or "").strip().casefold()
+        if not key:
+            return
+        rows = self.load()
+        rows[key] = {
+            "module_key": str(module_key or "").strip().casefold(),
+            "staged_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _atomic_json(self.path, {"schema_version": 1, "handoffs": rows})
 
 
 class SocialSettingsStore:

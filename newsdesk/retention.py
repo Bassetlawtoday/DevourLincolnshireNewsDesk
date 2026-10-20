@@ -12,20 +12,18 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-POLICY_VERSION = "1.1 — 30 August 2026"
+POLICY_VERSION = "1.2 — 20 October 2026"
 POLICY_MARKDOWN = PROJECT_ROOT / "docs" / "NEWSDESK_DATA_RETENTION_POLICY.md"
 POLICY_HTML = PROJECT_ROOT / "docs" / "NEWSDESK_DATA_RETENTION_POLICY.html"
 AUDIT_PATH = PROJECT_ROOT / "data" / "retention" / "cleanup_audit.jsonl"
 
 RETENTION_SCHEDULE = (
-    ("Local Democracy full articles and source images", "90 days unless newsletter-selected"),
-    ("Local Democracy listing metadata and analytics", "12 months unless newsletter-selected"),
+    ("Active Council, Police, Sport and Local Democracy module content", "7 days"),
     ("LDRS author/reviewer email addresses", "Not retained"),
     ("Expired EventsDesk events", "90 days unless newsletter-selected"),
     ("Planning records after conclusion", "12 months"),
     ("Facebook working records", "30 days"),
-    ("Unsubmitted Social Desk drafts", "90 days"),
-    ("Metricool delivery references", "12 months"),
+    ("Social Desk local copies", "7 days; remote Metricool/social posts are unaffected"),
     ("Temporary source-image cache", "14 days"),
     ("Application logs", "30 days"),
     ("Abandoned newsletter drafts", "Review after 90 days; no automatic editorial deletion"),
@@ -85,8 +83,7 @@ def _content_cleanup(root: Path, now: datetime, protected: set[str], dry_run: bo
     path = root / "data" / "contentdesk" / "contentdesk.sqlite"
     if not path.exists():
         return result
-    cutoff_full = (now - timedelta(days=90)).isoformat()
-    cutoff_metadata = (now - timedelta(days=365)).isoformat()
+    cutoff_full = (now - timedelta(days=7)).isoformat()
     with sqlite3.connect(path) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute("SELECT article_id,created_at,fetched_at,author_email,reviewer_email,body,image_url,image_caption,image_credit FROM content_stories").fetchall()
@@ -97,18 +94,12 @@ def _content_cleanup(root: Path, now: datetime, protected: set[str], dry_run: bo
                 result["emails_removed"] += 1
                 if not dry_run:
                     connection.execute("UPDATE content_stories SET author_email='', reviewer_email='' WHERE article_id=?", (article_id,))
-            if article_id in protected:
-                continue
-            if stamp.isoformat() < cutoff_metadata:
+            if stamp.isoformat() < cutoff_full:
                 result["metadata_removed"] += 1
                 if not dry_run:
                     connection.execute("DELETE FROM content_stories WHERE article_id=?", (article_id,))
-            elif stamp.isoformat() < cutoff_full and any(row[key] for key in ("body", "image_url", "image_caption", "image_credit")):
-                result["full_articles_minimised"] += 1
-                if not dry_run:
-                    connection.execute("UPDATE content_stories SET body='', image_url='', image_caption='', image_credit='', detail_complete=0 WHERE article_id=?", (article_id,))
         if not dry_run:
-            connection.execute("DELETE FROM content_sync_runs WHERE started_at < ?", (cutoff_metadata,))
+            connection.execute("DELETE FROM content_sync_runs WHERE started_at < ?", (cutoff_full,))
     return result
 
 
@@ -186,9 +177,8 @@ def _social_cleanup(root: Path, now: datetime, dry_run: bool) -> int:
     kept = []
     removed = 0
     for draft in drafts if isinstance(drafts, list) else []:
-        stamp = _parse(draft.get("updated_at")) if isinstance(draft, dict) else None
-        submitted = str(draft.get("status") or "").casefold() == "metricool draft" if isinstance(draft, dict) else False
-        cutoff = now - timedelta(days=365 if submitted else 90)
+        stamp = _parse(draft.get("created_at")) if isinstance(draft, dict) else None
+        cutoff = now - timedelta(days=7)
         if stamp and stamp < cutoff:
             removed += 1
         else:
@@ -196,6 +186,38 @@ def _social_cleanup(root: Path, now: datetime, dry_run: bool) -> int:
     if removed and not dry_run:
         payload["drafts"] = kept
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return removed
+
+
+def _feed_snapshot_cleanup(root: Path, now: datetime, dry_run: bool) -> int:
+    """Remove stories older than seven days from active feed snapshots."""
+    removed = 0
+    cutoff = now - timedelta(days=7)
+    directory = root / "data" / "feed_snapshots"
+    for module_key in ("council", "police", "sport"):
+        for path in (directory / f"{module_key}.json", directory / f"{module_key}.json.bak"):
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            payload = document.get("payload") or {}
+            stories = list(payload.get("stories") or [])
+            keep_indices = []
+            for index, story in enumerate(stories):
+                stamp = _parse(story.get("published")) if isinstance(story, dict) else None
+                if stamp is None or stamp >= cutoff:
+                    keep_indices.append(index)
+            removed += len(stories) - len(keep_indices)
+            if len(keep_indices) == len(stories) or dry_run:
+                continue
+            remap = {old: new for new, old in enumerate(keep_indices)}
+            payload["stories"] = [stories[index] for index in keep_indices]
+            payload["publish_results"] = [
+                {**row, "story_index": remap[int(row["story_index"])]}
+                for row in payload.get("publish_results") or []
+                if int(row.get("story_index", -1)) in remap
+            ]
+            path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
     return removed
 
 
@@ -218,6 +240,7 @@ def apply_retention(project_root: Path | None = None, *, dry_run: bool = False, 
             {"newsdesk-image-placeholder.png"},
         )
         result["social_drafts_removed"] = _social_cleanup(root, current, dry_run)
+        result["feed_snapshot_stories_removed"] = _feed_snapshot_cleanup(root, current, dry_run)
         result["status"] = "passed"
     except Exception as exc:  # retention must never prevent newsroom startup
         LOGGER.exception("Data-retention run failed")

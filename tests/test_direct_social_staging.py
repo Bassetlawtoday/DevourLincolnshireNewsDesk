@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from newsdesk.social.selection import stage_story_for_social_desk
-from newsdesk.social.store import SocialDraftStore
+from newsdesk.social.store import SocialDraftStore, SocialHandoffStore
 from newsdesk.story import Story
 from newsdesk.dashboard.refresh_coordinator import DashboardRefreshCoordinator
 from newsdesk.dashboard.state_store import DashboardStateStore
@@ -53,6 +53,25 @@ def test_missing_image_credit_does_not_block_story_staging(tmp_path, monkeypatch
     assert draft.image_url == ""
     assert draft.image_credit == ""
     assert draft.image_rights_status == "no image"
+
+
+def test_deleted_draft_is_not_recreated_by_refresh(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    story = _story()
+    stage_story_for_social_desk(story, module_key="council")
+    SocialDraftStore().save([])
+    assert SocialHandoffStore().load()
+
+    state_store = DashboardStateStore(tmp_path / "dashboard.json")
+    coordinator = DashboardRefreshCoordinator(state_store=state_store)
+    state = state_store.load()
+    state["modules"]["council"] = {"known_item_keys": ["older-item"]}
+    state_store.save(state)
+
+    assert coordinator._stage_new_social_drafts(
+        "council", {"stories": [story]}
+    ) == 0
+    assert SocialDraftStore().load() == []
 
 
 def test_ldrs_staging_keeps_provenance_private_and_byline(tmp_path, monkeypatch):

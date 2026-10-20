@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
@@ -95,6 +95,15 @@ class DashboardRefreshCoordinator:
         try:
             collected = self.collectors[module_key]()
             result.count, payload = self._count_and_payload(collected)
+            if module_key in {"police", "sport", "council", "content"} and isinstance(payload, dict):
+                stories = list(payload.get("stories") or [])
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                retained = [
+                    story for story in stories
+                    if (self._story_date(story) is None or self._story_date(story) >= cutoff)
+                ]
+                payload["stories"] = retained
+                result.count = len(retained)
             result.success = True
         except Exception as error:
             result.error_message = str(error)[:240] or error.__class__.__name__
@@ -134,8 +143,8 @@ class DashboardRefreshCoordinator:
 
     def _stage_new_social_drafts(self, module_key: str, payload: dict) -> int:
         """Stage only newly discovered stories, without overwriting editors."""
-        from newsdesk.social.selection import stage_story_for_social_desk
-        from newsdesk.social.store import SocialDraftStore
+        from newsdesk.social.selection import _story_identity, stage_story_for_social_desk
+        from newsdesk.social.store import SocialDraftStore, SocialHandoffStore
         from newsdesk.social.text import clean_social_text
         from newsdesk.updates.content_gate import has_verified_full_content
 
@@ -191,9 +200,12 @@ class DashboardRefreshCoordinator:
         else:
             stories = [(story, False) for story in stories]
 
+        handoffs = SocialHandoffStore()
         created = 0
         upgraded = 0
         for story, safe_teaser_upgrade in stories:
+            if handoffs.contains(_story_identity(story, module_key)) and not safe_teaser_upgrade:
+                continue
             _draft, was_created = stage_story_for_social_desk(
                 story,
                 module_key=module_key,
@@ -401,6 +413,8 @@ class DashboardRefreshCoordinator:
         from contentdesk.storage import ContentStore
         from modules.content import _story_from_row, get_current_content_stories
         from newsdesk.updates.content_gate import has_verified_full_content
+        from newsdesk.social.selection import _story_identity
+        from newsdesk.social.store import SocialHandoffStore
 
         key = load_api_key()
         if not key:
@@ -413,6 +427,10 @@ class DashboardRefreshCoordinator:
         stage_stories = []
         detail_errors = []
         repaired = 0
+        handed_off = 0
+        outside_window = 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        handoffs = SocialHandoffStore()
         try:
             with ContentExplorerCollector(key) as collector:
                 rows = collector.collect_listings(limit=100)
@@ -426,6 +444,14 @@ class DashboardRefreshCoordinator:
                     )
                     if not needs_detail:
                         stored += store.upsert_many([listing])
+                        story = existing_story
+                        stamp = DashboardRefreshCoordinator._story_date(story)
+                        if stamp and stamp < cutoff:
+                            outside_window += 1
+                        elif handoffs.contains(_story_identity(story, "content")):
+                            handed_off += 1
+                        else:
+                            stage_stories.append(story)
                         continue
                     try:
                         detail = collector.fetch_detail(article_id)
@@ -442,7 +468,13 @@ class DashboardRefreshCoordinator:
                         story = _story_from_row(stored_row)
                         if not has_verified_full_content("content", story):
                             raise RuntimeError("LDRS article did not pass the full-content check")
-                        stage_stories.append(story)
+                        stamp = DashboardRefreshCoordinator._story_date(story)
+                        if stamp and stamp < cutoff:
+                            outside_window += 1
+                        elif handoffs.contains(_story_identity(story, "content")):
+                            handed_off += 1
+                        else:
+                            stage_stories.append(story)
                         repaired += int(existing_row is not None)
                     except Exception as error:
                         detail_errors.append(f"{article_id}: {error}")
@@ -472,7 +504,20 @@ class DashboardRefreshCoordinator:
             "stage_stories": stage_stories,
             "full_articles_staged": len(stage_stories),
             "stored_articles_repaired": repaired,
+            "already_handed_off": handed_off,
+            "outside_recovery_window": outside_window,
             "detail_errors": detail_errors,
             "errors": detail_errors,
         }
+
+    @staticmethod
+    def _story_date(story) -> datetime | None:
+        value = str(getattr(story, "published", "") or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
 

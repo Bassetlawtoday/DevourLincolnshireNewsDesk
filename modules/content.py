@@ -139,10 +139,20 @@ def get_content_dashboard_summary() -> dict:
 
 def get_current_content_stories() -> list[Story]:
     """Return stored Lincolnshire LDRS rows as normalised newsroom stories."""
-    return [
-        _story_from_row(row) for row in ContentStore().list_stories()
-        if _row_is_lincolnshire(row)
-    ]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    stories = []
+    for row in ContentStore().list_stories():
+        if not _row_is_lincolnshire(row):
+            continue
+        story = _story_from_row(row)
+        try:
+            stamp = datetime.fromisoformat(str(story.published).replace("Z", "+00:00"))
+            stamp = stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
+        except (TypeError, ValueError):
+            stamp = None
+        if stamp is None or stamp >= cutoff:
+            stories.append(story)
+    return stories
 
 
 def open_content(master=None):

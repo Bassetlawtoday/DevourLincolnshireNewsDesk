@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import hashlib
 from tkinter import messagebox
 
-from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
+from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialHandoffStore, SocialSettingsStore
 from newsdesk.social.text import clean_social_text, repair_ldrs_draft
 
 
@@ -116,6 +116,7 @@ def stage_story_for_social_desk(
     )
     existed = draft is not None
     if existed and not update_existing:
+        SocialHandoffStore().mark(identity, module_key)
         return draft, False
     draft = draft or SocialDraft()
 
@@ -175,6 +176,7 @@ def stage_story_for_social_desk(
     if not existed:
         drafts.append(draft)
     store.save(drafts)
+    SocialHandoffStore().mark(identity, module_key)
     return draft, not existed
 
 
@@ -207,6 +209,7 @@ __all__ = [
     "add_story_to_social_desk",
     "social_workflow_status",
     "stage_story_for_social_desk",
+    "_story_identity",
 ]
 
 # NewsDesk Reel Builder extension

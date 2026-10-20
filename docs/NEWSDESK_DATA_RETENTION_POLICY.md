@@ -17,13 +17,13 @@ The live installation is held locally under `C:\Users\<user>\Documents\DevourLin
 
 | Information | Local location | Purpose | Retention and disposal |
 |---|---|---|---|
-| Local Democracy article metadata, authors, councils, categories and dates | `data\contentdesk\contentdesk.sqlite` | Search, discovery and aggregate analysis | 12 months; deleted automatically unless newsletter-selected |
-| Local Democracy full article text, source-image URL, caption and credit | Same database; downloaded working media in the local cache | Editorial review, copying and newsletter selection | 90 days; full copy is minimised automatically unless newsletter-selected |
+| Council, Police and Sport feed snapshots | `data\feed_snapshots` | Editorial review and Social Desk staging | 7 days; deleted automatically from the local NewsDesk |
+| Local Democracy article metadata and full content | `data\contentdesk\contentdesk.sqlite` | Editorial review and Social Desk staging | 7 days; deleted automatically from the local NewsDesk |
 | LDRS author/reviewer email addresses | Never intentionally retained after collection | Not required for the newsroom functions | Removed on every retention run |
 | Events and source provenance | `data\eventsdesk\eventsdesk.sqlite` | Event discovery, verification, history and newsletter selection | Expired events: 90 days, then deleted unless newsletter-selected |
 | Planning records | `data\newsdesk.db` | Planning monitoring and editorial research | Active records while required; concluded records reviewed/removed after 12 months |
 | Police, Fire, Sport and Council live results | Application memory during the current session | Current newsroom monitoring | End of session, except an item selected into a newsletter |
-| Social Desk local drafts | `data\social\drafts.json` | Prepare and review posts before transfer to Metricool | Unsubmitted drafts: 90 days; Metricool delivery references: 12 months |
+| Social Desk local drafts | `data\social\drafts.json` | Prepare and review posts before transfer to Metricool | 7 days from first staging; remote Metricool and social-network content is unaffected |
 | Metricool connection settings | `data\social\metricool.json` | Identify the selected Metricool user and brand | While the integration is active; API token is encrypted for the signed-in Windows user |
 | Newsletter editions and selected copy | `data\newsletter\editions.json` | Editorial production, provenance, corrections and publication record | Permanent editorial archive unless an authorised editor decides otherwise |
 | Rights-approved newsletter images and rights records | `data\newsletter\images` and edition records | Evidence of rights review and faithful publication archive | Permanent with the associated editorial record |
@@ -38,8 +38,8 @@ The program source may be checkpointed to GitHub. Databases, API keys, downloade
 ## Rules and safeguards
 
 1. Data minimisation: retain only fields needed for an identified editorial or operational purpose. LDRS contact emails are removed because they are not needed by the product.
-2. Newsletter protection: any source item selected into a newsletter is protected from automatic source-record deletion so the editorial decision, provenance, rights evidence and published output remain auditable.
-3. Draft protection: the system flags abandoned drafts for review after 90 days but does not silently delete editorial work.
+2. Newsletter protection: the separate newsletter archive retains its selected copy, provenance, rights evidence and published output even after the source module's seven-day working copy expires.
+3. Social deletion protection: seven-day deletion affects local working copies only; it never deletes Metricool drafts or social-network posts. A content-free identity record prevents an intentionally deleted item being recreated automatically.
 4. Aggregate analysis: non-identifying totals may be retained after source detail expires where the total cannot be used to reconstruct an article or identify an individual.
 5. Source rights: retention does not create a right to republish. Reuse remains subject to the supplier's terms, copyright, embargo, credit, caption and permission information recorded for the item.
 6. Security: local access is limited to authorised users; credentials are not displayed in the dashboard or committed to Git; backups and exports require equivalent protection.
