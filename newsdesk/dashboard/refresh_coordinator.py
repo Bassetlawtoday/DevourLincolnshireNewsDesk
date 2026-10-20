@@ -135,6 +135,9 @@ class DashboardRefreshCoordinator:
     def _stage_new_social_drafts(self, module_key: str, payload: dict) -> int:
         """Stage only newly discovered stories, without overwriting editors."""
         from newsdesk.social.selection import stage_story_for_social_desk
+        from newsdesk.social.store import SocialDraftStore
+        from newsdesk.social.text import clean_social_text
+        from newsdesk.updates.content_gate import has_verified_full_content
 
         stories = payload.get("stage_stories")
         if stories is None:
@@ -142,22 +145,64 @@ class DashboardRefreshCoordinator:
             state = self.state_store.load()
             previous = (state.get("modules") or {}).get(module_key, {})
             known = set(previous.get("known_item_keys") or ())
+            pending = set(previous.get("social_stage_pending_keys") or ())
             # The first successful refresh establishes a baseline. This avoids
             # flooding Social Desk with the complete historical source archive.
             if not known:
                 return 0
-            stories = [
-                story for story in all_stories
-                if not set(self.item_keys(module_key, {"stories": [story]})) <= known
-            ]
+            stories = []
+            next_pending = set()
+            social_store = SocialDraftStore()
+            drafts = social_store.load() if module_key == "sport" else []
+            for story in all_stories:
+                story_keys = set(self.item_keys(module_key, {"stories": [story]}))
+                is_new_or_pending = bool(story_keys - known or story_keys & pending)
+
+                # A previous release could stage a listing teaser when it
+                # already had an image. Upgrade only an untouched, unsent Sport
+                # draft whose text is still exactly that source teaser.
+                safe_teaser_upgrade = False
+                if module_key == "sport" and has_verified_full_content("sport", story):
+                    source_url = str(getattr(story, "url", "") or "").strip()
+                    existing = social_store.find_by_source_url(drafts, source_url)
+                    expected_teaser = clean_social_text(
+                        getattr(story, "summary", ""), source_url=source_url
+                    )
+                    safe_teaser_upgrade = bool(
+                        existing
+                        and not str(existing.metricool_id or "").strip()
+                        and str(existing.status or "") == "Sport draft"
+                        and " ".join(str(existing.text or "").split()).casefold()
+                        == " ".join(expected_teaser.split()).casefold()
+                    )
+
+                if module_key == "sport" and not has_verified_full_content("sport", story):
+                    if is_new_or_pending:
+                        next_pending.update(story_keys)
+                    continue
+                if is_new_or_pending or safe_teaser_upgrade:
+                    stories.append((story, safe_teaser_upgrade))
+
+            if module_key == "sport":
+                state.setdefault("modules", {}).setdefault(module_key, {})[
+                    "social_stage_pending_keys"
+                ] = sorted(next_pending)
+                self.state_store.save(state)
+        else:
+            stories = [(story, False) for story in stories]
 
         created = 0
-        for story in stories:
+        upgraded = 0
+        for story, safe_teaser_upgrade in stories:
             _draft, was_created = stage_story_for_social_desk(
-                story, module_key=module_key, update_existing=False
+                story,
+                module_key=module_key,
+                update_existing=safe_teaser_upgrade,
             )
             created += int(was_created)
+            upgraded += int(safe_teaser_upgrade and not was_created)
         payload["social_drafts_staged"] = created
+        payload["social_drafts_upgraded"] = upgraded
         return created
 
     def record_result(self, result: DashboardRefreshResult) -> None:
@@ -309,6 +354,7 @@ class DashboardRefreshCoordinator:
             "stories": collection.stories,
             "publish_results": collection.publish_results,
             "errors": collection.errors,
+            "source_health": collection.source_health,
         }
 
     @staticmethod
@@ -365,23 +411,22 @@ class DashboardRefreshCoordinator:
         rows = []
         stored = 0
         stage_stories = []
+        detail_errors = []
+        repaired = 0
         try:
             with ContentExplorerCollector(key) as collector:
                 rows = collector.collect_listings(limit=100)
-                existing = []
-                new_listings = []
                 for listing in rows:
                     article_id = str(listing.get("article_id") or "").strip()
-                    if article_id and store.get(article_id) is None:
-                        new_listings.append(listing)
-                    else:
-                        existing.append(listing)
-
-                # Existing listing metadata may be refreshed safely. New rows
-                # are persisted only after their complete article downloads.
-                stored += store.upsert_many(existing)
-                for listing in new_listings:
-                    article_id = str(listing.get("article_id") or "").strip()
+                    existing_row = store.get(article_id) if article_id else None
+                    existing_story = _story_from_row(existing_row) if existing_row else None
+                    needs_detail = (
+                        existing_story is None
+                        or not has_verified_full_content("content", existing_story)
+                    )
+                    if not needs_detail:
+                        stored += store.upsert_many([listing])
+                        continue
                     try:
                         detail = collector.fetch_detail(article_id)
                         complete = {**listing, **detail}
@@ -398,7 +443,9 @@ class DashboardRefreshCoordinator:
                         if not has_verified_full_content("content", story):
                             raise RuntimeError("LDRS article did not pass the full-content check")
                         stage_stories.append(story)
-                    except Exception:
+                        repaired += int(existing_row is not None)
+                    except Exception as error:
+                        detail_errors.append(f"{article_id}: {error}")
                         LOGGER.exception(
                             "Could not download complete LDRS article %s; it was not staged",
                             article_id,
@@ -423,5 +470,9 @@ class DashboardRefreshCoordinator:
             "scope": "Latest 100",
             "stories": all_stories,
             "stage_stories": stage_stories,
+            "full_articles_staged": len(stage_stories),
+            "stored_articles_repaired": repaired,
+            "detail_errors": detail_errors,
+            "errors": detail_errors,
         }
 

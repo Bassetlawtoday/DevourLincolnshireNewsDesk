@@ -28,6 +28,7 @@ from newsdesk.sports.rss.bbc_rugby_union import BBCRugbyUnionScraper
 from newsdesk.sports.sport_scraper import SportScraper
 from newsdesk.sports.websites import default_website_scrapers
 from newsdesk.story import Story
+from newsdesk.updates.content_gate import has_verified_full_content
 
 
 SportScraperFactory = Callable[[], Any]
@@ -159,20 +160,25 @@ class SportCollectionService:
             # Enrichment must precede fallback selection.  Otherwise a real
             # article photograph discovered later can be masked by a holding
             # image created from an empty listing-level image field.
-            stories_requiring_media = [
-                story
-                for story in result.stories
-                if not is_still_image_url(story.image_url)
-                or story.image_is_fallback
-            ]
+            enrichment_assessor = SportArticleService(timeout=15.0)
+            stories_requiring_enrichment = []
+            for story in result.stories:
+                try:
+                    if enrichment_assessor.needs_enrichment(story):
+                        stories_requiring_enrichment.append(story)
+                except Exception as error:
+                    result.errors.append(
+                        f"{self._story_identifier(story)}: "
+                        f"article enrichment assessment failed: {error}"
+                    )
             with ThreadPoolExecutor(
-                max_workers=min(8, max(1, len(stories_requiring_media))),
+                max_workers=min(8, max(1, len(stories_requiring_enrichment))),
                 thread_name_prefix="sport-enrichment",
             ) as enrichment_executor:
                 list(
                     enrichment_executor.map(
-                        lambda story: self._enrich_story_media(story, result),
-                        stories_requiring_media,
+                        lambda story: self._enrich_story(story, result),
+                        stories_requiring_enrichment,
                     )
                 )
 
@@ -255,12 +261,19 @@ class SportCollectionService:
         """Make source counts describe stories retained in the final feed."""
 
         retained_by_source: dict[str, int] = {}
+        complete_by_source: dict[str, int] = {}
+        incomplete_by_source: dict[str, int] = {}
         for story in result.stories:
             source_name = str(story.source or "").strip()
             if source_name:
-                retained_by_source[source_name.casefold()] = (
-                    retained_by_source.get(source_name.casefold(), 0) + 1
+                source_key = source_name.casefold()
+                retained_by_source[source_key] = (
+                    retained_by_source.get(source_key, 0) + 1
                 )
+                if has_verified_full_content("sport", story):
+                    complete_by_source[source_key] = complete_by_source.get(source_key, 0) + 1
+                else:
+                    incomplete_by_source[source_key] = incomplete_by_source.get(source_key, 0) + 1
 
         for row in result.source_health:
             if row.get("status") == "failed":
@@ -268,14 +281,21 @@ class SportCollectionService:
                 continue
 
             source_name = str(row.get("source_name") or "").strip()
-            retained = retained_by_source.get(source_name.casefold(), 0)
+            source_key = source_name.casefold()
+            retained = retained_by_source.get(source_key, 0)
             raw_count = int(row.get("story_count") or 0)
             row["raw_story_count"] = raw_count
             row["story_count"] = retained
+            row["full_content_count"] = complete_by_source.get(source_key, 0)
+            row["incomplete_content_count"] = incomplete_by_source.get(source_key, 0)
 
             if retained:
                 row["status"] = "yielding"
-                row["message"] = "Current stories retained in the Sport feed."
+                row["message"] = (
+                    f"Current stories retained: {retained}; full content: "
+                    f"{row['full_content_count']}; incomplete: "
+                    f"{row['incomplete_content_count']}."
+                )
             elif raw_count:
                 row["status"] = "no-current-stories"
                 row["message"] = (
@@ -298,7 +318,10 @@ class SportCollectionService:
 
         source_url = str(story.image_url or "").strip()
 
-        if source_url and not is_still_image_url(source_url):
+        if source_url and (
+            not is_still_image_url(source_url)
+            or self._is_placeholder_image(source_url)
+        ):
             story.extras["rejected_media_url"] = source_url
             story.image_url = ""
             source_url = ""
@@ -354,7 +377,7 @@ class SportCollectionService:
                 )
 
     @staticmethod
-    def _enrich_story_media(
+    def _enrich_story(
         story: Story,
         result: SportCollectionResult,
     ) -> None:
@@ -364,8 +387,19 @@ class SportCollectionService:
         except Exception as error:
             result.image_errors.append(
                 f"{SportCollectionService._story_identifier(story)}: "
-                f"article media enrichment failed: {error}"
+                f"article enrichment failed: {error}"
             )
+
+    @staticmethod
+    def _is_placeholder_image(url: str) -> bool:
+        value = str(url or "").casefold()
+        return any(
+            marker in value
+            for marker in (
+                "/placeholder/", "placeholder.", "placeholder_",
+                "default-image", "default_image", "no-image", "no_image",
+            )
+        )
 
     @staticmethod
     def _write_source_health(result: SportCollectionResult) -> None:
@@ -380,6 +414,8 @@ class SportCollectionService:
                 "no_stories": sum(1 for row in result.source_health if row["status"] == "no-stories"),
                 "no_current_stories": sum(1 for row in result.source_health if row["status"] == "no-current-stories"),
                 "failed": sum(1 for row in result.source_health if row["status"] == "failed"),
+                "full_content": sum(int(row.get("full_content_count") or 0) for row in result.source_health),
+                "incomplete_content": sum(int(row.get("incomplete_content_count") or 0) for row in result.source_health),
             },
             "sources": result.source_health,
         }

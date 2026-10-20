@@ -5,6 +5,8 @@ from pathlib import Path
 from newsdesk.social.selection import stage_story_for_social_desk
 from newsdesk.social.store import SocialDraftStore
 from newsdesk.story import Story
+from newsdesk.dashboard.refresh_coordinator import DashboardRefreshCoordinator
+from newsdesk.dashboard.state_store import DashboardStateStore
 
 
 def _story(**overrides):
@@ -70,3 +72,37 @@ def test_ldrs_staging_keeps_provenance_private_and_byline(tmp_path, monkeypatch)
     assert draft.internal_source_url == story.url
     assert draft.include_source_url is False
     assert draft.text.startswith("By: Reporter Name, LDRS.")
+
+
+def test_incomplete_sport_story_is_retried_after_full_content_arrives(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    state_store = DashboardStateStore(tmp_path / "dashboard.json")
+    coordinator = DashboardRefreshCoordinator(state_store=state_store)
+    incomplete = _story(
+        story_id="sport:1",
+        source="Official Club",
+        summary="Short fixture teaser.",
+        body="Short fixture teaser.",
+        extras={"article_content_status": "feed"},
+    )
+    key = coordinator.item_keys("sport", {"stories": [incomplete]})[0]
+    state = state_store.load()
+    state["modules"]["sport"] = {"known_item_keys": ["existing-baseline"]}
+    state_store.save(state)
+
+    assert coordinator._stage_new_social_drafts(
+        "sport", {"stories": [incomplete]}
+    ) == 0
+    assert key in state_store.load()["modules"]["sport"]["social_stage_pending_keys"]
+
+    complete = _story(
+        story_id="sport:1",
+        source="Official Club",
+        summary="Short fixture teaser.",
+        body=("Verified full match report paragraph. " * 12).strip(),
+        extras={"article_content_status": "complete"},
+    )
+    assert coordinator._stage_new_social_drafts(
+        "sport", {"stories": [complete]}
+    ) == 1
+    assert state_store.load()["modules"]["sport"]["social_stage_pending_keys"] == []
