@@ -198,7 +198,6 @@ class SystemHealthService:
         run_check("database", lambda: probe_database().to_dict())
         run_check("documentation", lambda: probe_documentation().to_dict())
         checked = datetime.now(timezone.utc)
-        run_check("planning_cache", lambda: self._planning_item(checked).to_dict())
         run_check("repository_cache", lambda: [item.to_dict() for item in self._data_items(checked)])
 
         completed = datetime.now(timezone.utc)
@@ -280,7 +279,6 @@ class SystemHealthService:
             else:
                 recommendation = "No action required"
             output.append(HealthItem(f"module_{key}", definition.display_name, "Modules", status, summary, details, now, last_success=last_success, last_failure=_parse_datetime(saved.get("last_attempt")) if latest_error else None, source="Dashboard state, result repository and scheduler policy", recommended_action=recommendation))
-        output.append(self._planning_item(now))
         output.extend(self._council_source_items(now))
         return output
 
@@ -331,7 +329,7 @@ class SystemHealthService:
         heavy_limit = int(settings.get("max_heavy_collectors", 2) or 2)
         heavy_in_use = len(set(running) & set(HEAVY_MODULE_KEYS))
         coordinator_status = HealthStatus.FAILED if heavy_in_use > heavy_limit else HealthStatus.HEALTHY
-        coordinator = HealthItem("refresh_coordinator", "Refresh Coordinator", "Scheduler", coordinator_status, f"{len(running)} active jobs; heavy usage {heavy_in_use} of {heavy_limit}.", {"active_jobs": running, "queued_jobs": "Not tracked", "heavy_worker_limit": heavy_limit, "heavy_workers_in_use": heavy_in_use, "light_workers_in_use": len(running) - heavy_in_use, "duplicate_prevention": "Active", "last_completed_job": (state.get("recent_runs") or [{}])[0].get("timestamp", "Unknown") if state.get("recent_runs") else "Unknown", "latest_coordinator_error": getattr(self.coordinator, "latest_planning_cache_error", "") or "None", "shutdown_state": "Closing" if getattr(self.runtime, "_closing", False) else "Running"}, now, source="DashboardRefreshCoordinator and Dashboard runtime", recommended_action="Review worker concurrency" if coordinator_status == HealthStatus.FAILED else "No action required")
+        coordinator = HealthItem("refresh_coordinator", "Refresh Coordinator", "Scheduler", coordinator_status, f"{len(running)} active jobs; heavy usage {heavy_in_use} of {heavy_limit}.", {"active_jobs": running, "queued_jobs": "Not tracked", "heavy_worker_limit": heavy_limit, "heavy_workers_in_use": heavy_in_use, "light_workers_in_use": len(running) - heavy_in_use, "duplicate_prevention": "Active", "last_completed_job": (state.get("recent_runs") or [{}])[0].get("timestamp", "Unknown") if state.get("recent_runs") else "Unknown", "latest_coordinator_error": "None", "shutdown_state": "Closing" if getattr(self.runtime, "_closing", False) else "Running"}, now, source="DashboardRefreshCoordinator and Dashboard runtime", recommended_action="Review worker concurrency" if coordinator_status == HealthStatus.FAILED else "No action required")
         return [scheduler, coordinator]
 
     def _data_items(self, now):

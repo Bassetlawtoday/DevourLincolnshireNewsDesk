@@ -15,9 +15,7 @@ DEFAULT_STATE = {
     "recent_runs": [],
     "scheduler": {
         "module_policies": {
-            "planning": {"mode": "Off", "daily_time": "06:15"},
             "police": {"mode": "Off"},
-            "fire": {"mode": "Off"},
             "sport": {"mode": "Off"},
             "council": {"mode": "Off"},
             "government": {"mode": "Off"},

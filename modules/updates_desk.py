@@ -1,4 +1,4 @@
-"""Central review queue for newly discovered non-Planning content."""
+"""Central review queue for newly discovered active-module content."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from newsdesk.updates.content_gate import has_verified_full_content, is_material
 _active_window = None
 ALL = "All"
 STATUS_LABELS = {ALL: "", "New": STATUS_NEW, "Sent to Social Desk": STATUS_SOCIAL, "Sent to Metricool": STATUS_METRICOOL}
-MODULE_LABELS = {"police": "Police", "fire": "Fire", "sport": "Sport", "council": "Council", "content": "Local Democracy"}
+MODULE_LABELS = {"police": "Police", "sport": "Sport", "council": "Council", "content": "Local Democracy"}
 
 
 def get_updates_dashboard_summary() -> dict[str, int]:
@@ -56,7 +56,7 @@ class UpdatesDesk(ctk.CTkToplevel):
     def _build(self):
         header = ctk.CTkFrame(self, fg_color=HEADER_BG, corner_radius=0, height=105); header.pack(fill="x"); header.pack_propagate(False)
         ctk.CTkLabel(header, text="UPDATES DESK", font=("Arial", 28, "bold"), text_color=TEXT_PRIMARY).pack(side="left", padx=28)
-        ctk.CTkLabel(header, text="New content from every refresh except Planning", text_color=TEXT_MUTED).pack(side="left")
+        ctk.CTkLabel(header, text="New content from active newsroom modules", text_color=TEXT_MUTED).pack(side="left")
         ctk.CTkButton(header, text="CLOSE", width=100, fg_color="#475569", command=self.destroy).pack(side="right", padx=24)
         filters = ctk.CTkFrame(self, fg_color="transparent"); filters.pack(fill="x", padx=24, pady=12)
         search = ctk.CTkEntry(filters, textvariable=self.query_var, placeholder_text="Search updates", width=300); search.pack(side="left", padx=(0, 8)); search.bind("<KeyRelease>", lambda _e: self.refresh())
