@@ -23,6 +23,8 @@ from .state_store import DashboardStateStore
 
 
 LOGGER = logging.getLogger(__name__)
+LDRS_DETAIL_LIMIT_PER_REFRESH = 12
+LDRS_REQUEST_TIMEOUT_SECONDS = 15
 class _NullWidget:
     def configure(self, **_kwargs) -> None:
         pass
@@ -426,13 +428,17 @@ class DashboardRefreshCoordinator:
         stored = 0
         stage_stories = []
         detail_errors = []
+        deferred_details = 0
+        detail_attempts = 0
         repaired = 0
         handed_off = 0
         outside_window = 0
         cutoff = datetime.now(timezone.utc) - timedelta(days=7)
         handoffs = SocialHandoffStore()
         try:
-            with ContentExplorerCollector(key) as collector:
+            with ContentExplorerCollector(
+                key, timeout=LDRS_REQUEST_TIMEOUT_SECONDS
+            ) as collector:
                 rows = collector.collect_listings(limit=100)
                 for listing in rows:
                     article_id = str(listing.get("article_id") or "").strip()
@@ -453,6 +459,10 @@ class DashboardRefreshCoordinator:
                         else:
                             stage_stories.append(story)
                         continue
+                    if detail_attempts >= LDRS_DETAIL_LIMIT_PER_REFRESH:
+                        deferred_details += 1
+                        continue
+                    detail_attempts += 1
                     try:
                         detail = collector.fetch_detail(article_id)
                         complete = {**listing, **detail}
@@ -504,6 +514,8 @@ class DashboardRefreshCoordinator:
             "stage_stories": stage_stories,
             "full_articles_staged": len(stage_stories),
             "stored_articles_repaired": repaired,
+            "detail_downloads_attempted": detail_attempts,
+            "detail_downloads_deferred": deferred_details,
             "already_handed_off": handed_off,
             "outside_recovery_window": outside_window,
             "detail_errors": detail_errors,

@@ -90,10 +90,6 @@ class SocialDesk(ctk.CTkToplevel):
         toolbar = ctk.CTkFrame(left, fg_color="transparent")
         toolbar.pack(fill="x", padx=12, pady=12)
         ctk.CTkButton(toolbar, text="NEW BLANK POST", width=140, command=self._new).pack(side="left")
-        ctk.CTkButton(
-            toolbar, text="CLEAR ALL", width=105, fg_color=BRAND_RED,
-            hover_color=BRAND_RED_HOVER, command=self._clear_all,
-        ).pack(side="right")
         ctk.CTkLabel(
             left,
             text="Create a blank post here, or add newsroom content directly from its intelligence module.",
@@ -235,7 +231,11 @@ class SocialDesk(ctk.CTkToplevel):
         ctk.CTkButton(actions, text="SAVE LOCAL DRAFT", width=155, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER, command=self._save).pack(side="left", padx=(0, 8))
         self.send_button = ctk.CTkButton(actions, text="SEND TO METRICOOL AS DRAFT", width=230, fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER, command=self._send)
         self.send_button.pack(side="left", padx=(0, 8))
-        ctk.CTkButton(actions, text="DELETE LOCAL DRAFT", width=160, fg_color="#475569", command=self._delete).pack(side="left")
+        ctk.CTkButton(actions, text="DELETE LOCAL DRAFT", width=160, fg_color="#475569", command=self._delete).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            actions, text="CLEAR ALL", width=115, fg_color=BRAND_RED,
+            hover_color=BRAND_RED_HOVER, command=self._clear_all,
+        ).pack(side="left")
         self.editor_status = ctk.CTkLabel(right, text="Create a local draft or import NewsDesk content.", text_color=TEXT_MUTED, anchor="w")
         self.editor_status.pack(fill="x", padx=20, pady=(0, 10))
         self._new()
