@@ -446,6 +446,10 @@ class SocialDesk(ctk.CTkToplevel):
         if not self.current or not any(item.draft_id == self.current.draft_id for item in self.drafts): return
         if not messagebox.askyesno("Delete local draft", "Delete this local Social Desk draft?", parent=self): return
         if not messagebox.askyesno("Confirm deletion", "Are you sure? This removes the local copy and cannot be undone.", parent=self): return
+        if self.current.source_identity:
+            SocialHandoffStore().mark_deleted(
+                self.current.source_identity, self.current.source_kind
+            )
         self.drafts = [item for item in self.drafts if item.draft_id != self.current.draft_id]
         self.store.save(self.drafts); self._refresh_list(); self._new()
 
@@ -467,6 +471,10 @@ class SocialDesk(ctk.CTkToplevel):
             parent=self,
         ):
             return
+        handoffs = SocialHandoffStore()
+        for draft in self.drafts:
+            if draft.source_identity:
+                handoffs.mark_deleted(draft.source_identity, draft.source_kind)
         self.drafts = []
         self.store.save([])
         self._refresh_list()

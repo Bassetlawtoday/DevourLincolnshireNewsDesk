@@ -8,15 +8,12 @@ import logging
 import threading
 from typing import Callable
 
-from newsdesk.services.fire_service import FireCollectionService
 from newsdesk.services.council_service import CouncilCollectionService
 from newsdesk.services.police_collection import PoliceCollectionService
 from newsdesk.services.sport_collection import SportCollectionService
-from services.planning_engine import run_weekly_download
 
 from .government_feed import GovernmentFeedService
 from .models import DashboardRefreshResult
-from .planning_cache import PlanningResultCache
 from .registry import MODULE_NAMES
 from .result_repository import DashboardResultRepository
 from .state_store import DashboardStateStore
@@ -25,50 +22,15 @@ from .state_store import DashboardStateStore
 LOGGER = logging.getLogger(__name__)
 LDRS_DETAIL_LIMIT_PER_REFRESH = 12
 LDRS_REQUEST_TIMEOUT_SECONDS = 15
-class _NullWidget:
-    def configure(self, **_kwargs) -> None:
-        pass
-
-
-class _PlanningAdapter:
-    """Supplies established Planning UI callbacks without touching Tk."""
-
-    def __init__(self) -> None:
-        self.downloaded = _NullWidget()
-        self.newsworthiness = _NullWidget()
-        self.report_data = None
-
-    def write_log(self, message: str) -> None:
-        LOGGER.debug("Planning dashboard refresh: %s", message)
-
-    def set_progress(self, *_args) -> None:
-        pass
-
-    def set_status(self, *_args) -> None:
-        pass
-
-    def set_current_application(self, *_args) -> None:
-        pass
-
-    def set_list_progress(self, *_args) -> None:
-        pass
-
-    def set_report_data(self, value) -> None:
-        self.report_data = value
-
-
 class DashboardRefreshCoordinator:
     def __init__(
         self,
         state_store: DashboardStateStore | None = None,
         collectors: dict[str, Callable[[], object]] | None = None,
         result_repository: DashboardResultRepository | None = None,
-        planning_cache: PlanningResultCache | None = None,
     ) -> None:
         self.state_store = state_store or DashboardStateStore()
         self.result_repository = result_repository or DashboardResultRepository()
-        self.planning_cache = planning_cache or PlanningResultCache()
-        self.latest_planning_cache_error = ""
         self._lock = threading.Lock()
         self._running: set[str] = set()
         self.latest_government_result = None
@@ -128,15 +90,6 @@ class DashboardRefreshCoordinator:
                     LOGGER.exception(
                         "Could not stage %s refresh in Social Desk", module_key
                     )
-            if module_key == "planning":
-                try:
-                    self.planning_cache.save(
-                        payload["report_data"], result.completed_at
-                    )
-                    self.latest_planning_cache_error = ""
-                except Exception as error:
-                    self.latest_planning_cache_error = str(error)[:240]
-                    LOGGER.exception("Could not persist Planning briefing cache")
             self.result_repository.set_result(
                 module_key, payload, result.completed_at
             )
@@ -206,7 +159,7 @@ class DashboardRefreshCoordinator:
         created = 0
         upgraded = 0
         for story, safe_teaser_upgrade in stories:
-            if handoffs.contains(_story_identity(story, module_key)) and not safe_teaser_upgrade:
+            if handoffs.is_deleted(_story_identity(story, module_key)) and not safe_teaser_upgrade:
                 continue
             _draft, was_created = stage_story_for_social_desk(
                 story,
@@ -297,27 +250,19 @@ class DashboardRefreshCoordinator:
     def item_keys(cls, module_key: str, payload: object | None) -> list[str]:
         if not isinstance(payload, dict):
             return []
-        if module_key == "planning":
-            report = payload.get("report_data") or {}
-            items = report.get("all_applications") or [] if isinstance(report, dict) else []
-            identities = (
-                (item.get("reference"), item.get("address"), item.get("proposal"))
-                for item in items if isinstance(item, dict)
+        items = payload.get("stories") or []
+        identities = (
+            (
+                item.get("story_id") or item.get("url") or item.get("title"),
+                item.get("source"),
+            ) if isinstance(item, dict) else (
+                getattr(item, "story_id", "")
+                or getattr(item, "url", "")
+                or getattr(item, "title", ""),
+                getattr(item, "source", ""),
             )
-        else:
-            items = payload.get("stories") or []
-            identities = (
-                (
-                    item.get("story_id") or item.get("url") or item.get("title"),
-                    item.get("source"),
-                ) if isinstance(item, dict) else (
-                    getattr(item, "story_id", "")
-                    or getattr(item, "url", "")
-                    or getattr(item, "title", ""),
-                    getattr(item, "source", ""),
-                )
-                for item in items
-            )
+            for item in items
+        )
         keys = []
         for identity in identities:
             normalised = "|".join(
@@ -335,26 +280,8 @@ class DashboardRefreshCoordinator:
         return int(collected), None
 
     @staticmethod
-    def _collect_planning() -> tuple[int, dict]:
-        adapter = _PlanningAdapter()
-        count = int(run_weekly_download(adapter))
-        return count, {
-            "report_data": adapter.report_data,
-            "count": count,
-        }
-
-    @staticmethod
     def _collect_police() -> tuple[int, dict]:
         collection = PoliceCollectionService().collect()
-        return collection.collected_count, {
-            "stories": collection.stories,
-            "publish_results": collection.publish_results,
-            "errors": collection.errors,
-        }
-
-    @staticmethod
-    def _collect_fire() -> tuple[int, dict]:
-        collection = FireCollectionService().collect()
         return collection.collected_count, {
             "stories": collection.stories,
             "publish_results": collection.publish_results,
@@ -390,23 +317,6 @@ class DashboardRefreshCoordinator:
         )
         announcements = self.latest_government_result.announcements
         return len(announcements), {"announcements": announcements}
-
-    @staticmethod
-    def _collect_events() -> tuple[int, dict]:
-        from eventsdesk.harvest_engine import MidlandsHarvestEngine
-        from eventsdesk.source_catalog import SourceCatalog
-        from eventsdesk.source_scope import enabled_sources
-        from modules.events import EVENTS_DATA_DIR, EVENTS_DATABASE, EVENTS_SUMMARY, get_event_dashboard_summary, get_current_event_stories
-        selected = enabled_sources(SourceCatalog.load_default(), EVENTS_DATA_DIR)
-        if not selected:
-            raise RuntimeError("No EventsDesk sources are enabled")
-        result = MidlandsHarvestEngine().harvest(
-            database=str(EVENTS_DATABASE), output=str(EVENTS_SUMMARY),
-            source_ids=[source.id for source in selected], skip_network_preflight=False,
-        )
-        from newsdesk.updates.store import UpdatesStore
-        UpdatesStore().ingest("events", get_current_event_stories())
-        return int(get_event_dashboard_summary()["count"]), {"summary": result}
 
     @staticmethod
     def _collect_content() -> tuple[int, dict]:
@@ -454,7 +364,7 @@ class DashboardRefreshCoordinator:
                         stamp = DashboardRefreshCoordinator._story_date(story)
                         if stamp and stamp < cutoff:
                             outside_window += 1
-                        elif handoffs.contains(_story_identity(story, "content")):
+                        elif handoffs.is_deleted(_story_identity(story, "content")):
                             handed_off += 1
                         else:
                             stage_stories.append(story)
@@ -481,7 +391,7 @@ class DashboardRefreshCoordinator:
                         stamp = DashboardRefreshCoordinator._story_date(story)
                         if stamp and stamp < cutoff:
                             outside_window += 1
-                        elif handoffs.contains(_story_identity(story, "content")):
+                        elif handoffs.is_deleted(_story_identity(story, "content")):
                             handed_off += 1
                         else:
                             stage_stories.append(story)

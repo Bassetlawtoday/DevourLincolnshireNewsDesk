@@ -19,7 +19,6 @@ DEFAULT_STATE = {
             "sport": {"mode": "Off"},
             "council": {"mode": "Off"},
             "government": {"mode": "Off"},
-            "events": {"mode": "Off"},
             "content": {"mode": "Off"}
         },
         "refresh_on_startup": False,

@@ -36,10 +36,6 @@ MODULE_DEFINITIONS = (
         show_card=False,
     ),
     DashboardModuleDefinition(
-        "events", "Events Intelligence", "heavy", show_card=False,
-        default_schedule="Every 12 hours",
-    ),
-    DashboardModuleDefinition(
         "content", "Local Democracy Intelligence", "heavy", show_card=False,
         default_schedule="Every 60 minutes",
     ),

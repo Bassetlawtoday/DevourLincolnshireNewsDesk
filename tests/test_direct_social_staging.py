@@ -60,7 +60,8 @@ def test_deleted_draft_is_not_recreated_by_refresh(tmp_path, monkeypatch):
     story = _story()
     stage_story_for_social_desk(story, module_key="council")
     SocialDraftStore().save([])
-    assert SocialHandoffStore().load()
+    identity = next(iter(SocialHandoffStore().load()))
+    SocialHandoffStore().mark_deleted(identity, "council")
 
     state_store = DashboardStateStore(tmp_path / "dashboard.json")
     coordinator = DashboardRefreshCoordinator(state_store=state_store)
@@ -72,6 +73,58 @@ def test_deleted_draft_is_not_recreated_by_refresh(tmp_path, monkeypatch):
         "council", {"stories": [story]}
     ) == 0
     assert SocialDraftStore().load() == []
+
+
+def test_legacy_handoff_does_not_block_automatic_ldrs_staging(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    story = _story(
+        story_id="content:100",
+        title="New local democracy report",
+        url="https://ldrs.org.uk/article/100",
+        author="Reporter Name",
+        body=("Verified LDRS article sentence with substantive reporting. " * 10).strip(),
+        extras={"detail_complete": True},
+    )
+    from newsdesk.social.selection import _story_identity
+
+    # This is the schema written by the retired Updates Desk workflow.
+    SocialHandoffStore().mark(_story_identity(story, "content"), "content")
+    coordinator = DashboardRefreshCoordinator(
+        state_store=DashboardStateStore(tmp_path / "dashboard.json")
+    )
+
+    assert coordinator._stage_new_social_drafts(
+        "content", {"stories": [story], "stage_stories": [story]}
+    ) == 1
+    drafts = SocialDraftStore().load()
+    assert len(drafts) == 1
+    assert drafts[0].source_kind == "content"
+
+
+def test_content_refresh_stages_ldrs_payload_automatically(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    story = _story(
+        story_id="content:101",
+        title="Automatic LDRS report",
+        url="https://ldrs.org.uk/article/101",
+        author="Reporter Name",
+        body=("Verified complete LDRS reporting sentence. " * 12).strip(),
+        extras={"detail_complete": True},
+    )
+    coordinator = DashboardRefreshCoordinator(
+        state_store=DashboardStateStore(tmp_path / "dashboard.json"),
+        collectors={"content": lambda: (1, {
+            "stories": [story], "stage_stories": [story]
+        })},
+    )
+
+    result = coordinator.refresh_module("content")
+
+    assert result is not None and result.success is True
+    drafts = SocialDraftStore().load()
+    assert len(drafts) == 1
+    assert drafts[0].title == "Automatic LDRS report"
+    assert drafts[0].text.startswith("By: Reporter Name, LDRS.")
 
 
 def test_ldrs_staging_keeps_provenance_private_and_byline(tmp_path, monkeypatch):

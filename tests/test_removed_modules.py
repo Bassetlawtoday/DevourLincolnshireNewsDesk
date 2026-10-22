@@ -53,7 +53,4 @@ def test_refresh_coordinator_has_no_removed_collectors():
 
 
 def test_updates_ui_has_no_fire_filter():
-    source = (PROJECT_ROOT / "modules" / "updates_desk.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"fire": "Fire"' not in source
+    assert not (PROJECT_ROOT / "modules" / "updates_desk.py").exists()

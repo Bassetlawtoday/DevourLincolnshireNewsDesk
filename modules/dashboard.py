@@ -17,15 +17,11 @@ from PIL import Image
 from newsdesk.display_dates import format_uk_datetime
 from newsdesk.theme import ACTION_BLUE, ACTION_BLUE_HOVER, LOGO_PATH
 
-from modules.fire import open_fire
 from modules.system_health import open_system_health
 from modules.data_retention import open_data_retention
 from modules.social_desk import open_social_desk
-from modules.jobs_desk import open_jobs_desk
 from modules.council import open_council
 from modules.content import open_content, get_content_dashboard_summary
-from modules.planning import PlanningWindow
-from modules.planning_report import open_planning_report
 from modules.police import open_police
 from modules.sport import open_sport
 from newsdesk.dashboard.branding import load_branding
@@ -35,7 +31,6 @@ from newsdesk.dashboard.registry import (
     HEAVY_MODULE_KEYS,
     MODULE_NAMES,
 )
-from newsdesk.dashboard.planning_cache import PlanningResultCache
 from newsdesk.dashboard.result_repository import DashboardResultRepository
 from newsdesk.dashboard.scheduler import DashboardScheduler
 from newsdesk.dashboard.state_store import DashboardStateStore
@@ -74,11 +69,9 @@ class Dashboard(ctk.CTkFrame):
         self.state_store = DashboardStateStore()
         self.state = self.state_store.load()
         self.result_repository = DashboardResultRepository()
-        self.planning_cache = PlanningResultCache()
         self.coordinator = DashboardRefreshCoordinator(
             self.state_store,
             result_repository=self.result_repository,
-            planning_cache=self.planning_cache,
         )
         heavy_limit = max(
             1, int(self.state["scheduler"].get("max_heavy_collectors", 2))
@@ -99,9 +92,6 @@ class Dashboard(ctk.CTkFrame):
         self._closing = False
         self._run_started_at = None
         self._run_results = {}
-        self.planning_results_window = None
-        self.planning_downloader_window = None
-        self._hydrate_planning_cache()
         self.pack(fill="both", expand=True)
         self._configure_window()
         self._build_layout()
@@ -167,11 +157,6 @@ class Dashboard(ctk.CTkFrame):
         # Retain the widget for scheduler compatibility without displaying it.
         self.next_refresh_label = ctk.CTkLabel(row, text="")
         ctk.CTkButton(
-            row, text="JOBS DESK", width=105,
-            fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
-            command=self._open_jobs_desk,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
             row, text="SOCIAL DESK", width=112,
             fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
             command=self._open_social_desk,
@@ -234,39 +219,6 @@ class Dashboard(ctk.CTkFrame):
         self.card_widgets[key] = {"count": count, "change": change, "updated": updated, "status": status}
         return card
 
-    def _build_events_card(self, parent):
-        summary = get_event_dashboard_summary()
-        card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
-        ctk.CTkLabel(card, text="Events Intelligence", font=("Arial", 16, "bold"), text_color=TEXT_PRIMARY, anchor="w").pack(fill="x", padx=17, pady=(16, 8))
-        self.events_count_label = ctk.CTkLabel(card, text=f"{summary['count']:,} current events", font=("Arial", 30, "bold"), text_color=TEXT_PRIMARY, anchor="w")
-        self.events_count_label.pack(fill="x", padx=17)
-        change = ctk.CTkLabel(card, text="Independent EventsDesk dataset", font=("Arial", 12), text_color=TEXT_MUTED, anchor="w")
-        change.pack(fill="x", padx=17, pady=(2, 7))
-        updated = str(summary.get("updated") or "Never").strip()
-        if updated and updated != "Never":
-            try:
-                updated = datetime.fromisoformat(updated.replace("Z", "+00:00")).strftime("%d %b %Y %H:%M")
-            except ValueError:
-                pass
-        updated_label = ctk.CTkLabel(
-            card, text=f"Last updated: {updated}", font=("Arial", 11),
-            text_color=TEXT_MUTED, anchor="w",
-        )
-        updated_label.pack(fill="x", padx=17)
-        self.events_status_label = ctk.CTkLabel(card, text=summary["status"], font=("Arial", 12, "bold"), text_color=SUCCESS if summary["count"] else TEXT_MUTED, anchor="w")
-        self.events_status_label.pack(fill="x", padx=17, pady=(5, 12))
-        ctk.CTkButton(card, text="OPEN", height=34, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER, command=self._open_events).pack(fill="x", padx=17, pady=(0, 16))
-        self.card_widgets["events"] = {"count": self.events_count_label, "change": change, "updated": updated_label, "status": self.events_status_label}
-        return card
-
-    def _open_events(self):
-        existing = self.module_windows.get("events")
-        if focus_existing_window(existing):
-            return existing
-        module = open_events(self.master)
-        track_window_reference(self.module_windows, "events", module)
-        return module
-
     def _build_content_card(self, parent):
         summary = get_content_dashboard_summary()
         card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=14, border_width=1, border_color=BORDER)
@@ -292,14 +244,6 @@ class Dashboard(ctk.CTkFrame):
             return existing
         module = open_content(self.master)
         track_window_reference(self.module_windows, "content", module)
-        return module
-
-    def _open_jobs_desk(self):
-        existing = self.module_windows.get("jobs")
-        if focus_existing_window(existing):
-            return existing
-        module = open_jobs_desk(self.master)
-        track_window_reference(self.module_windows, "jobs", module)
         return module
 
     def _open_social_desk(self):
@@ -431,9 +375,7 @@ class Dashboard(ctk.CTkFrame):
         )
         if not result.success:
             return
-        if result.module_key == "planning": count_text=f"{result.count} results"
-        elif result.module_key == "events": count_text=f"{result.count:,} current events"
-        elif result.module_key == "content": count_text=f"{result.count:,} stored stories"
+        if result.module_key == "content": count_text=f"{result.count:,} stored stories"
         else: count_text=f"{result.count} stories"
         widgets["count"].configure(text=count_text)
         updates_text = self._updates_label(
@@ -452,20 +394,11 @@ class Dashboard(ctk.CTkFrame):
             self._load_payload_into_open_module(result.module_key)
 
     def _load_payload_into_open_module(self, key):
-        if key in {"events", "content"}:
+        if key == "content":
             module = self.module_windows.get(key)
             if module is not None and hasattr(module, "refresh_database"):
                 try: module.refresh_database()
                 except Exception: LOGGER.debug("Could not refresh open %s database", key, exc_info=True)
-            return
-        if key == "planning":
-            stored = self.result_repository.get_result("planning")
-            existing = self.planning_results_window
-            try:
-                if stored and existing and existing.window.winfo_exists():
-                    existing.load_results(stored.payload["report_data"])
-            except Exception:
-                LOGGER.debug("Could not refresh open Planning briefing", exc_info=True)
             return
         module = self.module_windows.get(key)
         if module is None:
@@ -545,9 +478,7 @@ class Dashboard(ctk.CTkFrame):
             widgets = self.card_widgets[key]
             count = stored.get("latest_successful_count")
             if count is not None:
-                if key == "planning": count_text=f"{count} results"
-                elif key == "events": count_text=f"{count:,} current events"
-                elif key == "content": count_text=f"{count:,} stored stories"
+                if key == "content": count_text=f"{count:,} stored stories"
                 else: count_text=f"{count} stories"
                 widgets["count"].configure(text=count_text)
                 today = datetime.now().astimezone().date().isoformat()
@@ -569,9 +500,9 @@ class Dashboard(ctk.CTkFrame):
                     latest_story_count = int(get_content_dashboard_summary().get("latest_discovered") or 0)
                     widgets["change"].configure(text=f"Latest refresh: {latest_story_count:,} LDRS stories", text_color=TEXT_MUTED)
                 widgets["status"].configure(
-                    text=("Completed — local data available" if key in {"events", "content"}
+                    text=("Completed — local data available" if key == "content"
                           else "Previous-session count — payload unavailable"),
-                    text_color=SUCCESS if key in {"events", "content"} else WARNING,
+                    text_color=SUCCESS if key == "content" else WARNING,
                 )
             refreshed = stored.get("last_successful_refresh")
             if refreshed:
@@ -613,18 +544,11 @@ class Dashboard(ctk.CTkFrame):
             ctk.CTkLabel(self.recent_runs_frame, text=f"{timestamp}   {values}   {run.get('status', '').title()}", font=("Arial", 11), text_color=TEXT_SECONDARY, anchor="w").pack(fill="x", pady=2)
 
     def _open_module(self, key):
-        if key == "planning":
-            started = perf_counter()
-            self._open_planning_destination()
-            self._record_window_open(key, perf_counter() - started)
-            return
         existing = self.module_windows.get(key)
         if focus_existing_window(existing):
             return
         opener = {
-            "planning": PlanningWindow,
             "police": lambda: open_police(self.master),
-            "fire": lambda: open_fire(self.master),
             "sport": lambda: open_sport(self.master),
             "council": lambda: open_council(self.master),
         }[key]
@@ -655,7 +579,6 @@ class Dashboard(ctk.CTkFrame):
         service = SystemHealthService(
             dashboard_state=self.state_store,
             repository=self.result_repository,
-            planning_cache=self.planning_cache,
             coordinator=self.coordinator,
             runtime=self,
         )
@@ -671,93 +594,7 @@ class Dashboard(ctk.CTkFrame):
         if self.module_windows.get("data_retention") is not window:
             track_window_reference(self.module_windows, "data_retention", window)
 
-    def _open_planning_destination(self):
-        stored = self.result_repository.get_result("planning")
-        if self._planning_open_target() == "results":
-            existing = self.planning_results_window
-            try:
-                if existing and existing.window.winfo_exists():
-                    existing.load_results(stored.payload["report_data"])
-                    return
-            except Exception:
-                self.planning_results_window = None
-            downloader_report = getattr(self.planning_downloader_window, "report_window", None)
-            try:
-                if downloader_report and downloader_report.window.winfo_exists():
-                    downloader_report.load_results(stored.payload["report_data"])
-                    self.planning_results_window = downloader_report
-                    return
-            except Exception:
-                pass
-            self.planning_results_window = open_planning_report(
-                self.master,
-                stored.payload["report_data"],
-                refresh_command=self._refresh_planning_in_report,
-            )
-            return
-        from tkinter import messagebox
-        if not messagebox.askyesno(
-            "Planning results unavailable",
-            "The previous Planning count is available, but its results payload is missing or invalid.\n\nOpen the Planning downloader to refresh or troubleshoot?",
-            parent=self.master,
-        ):
-            return
-        self._open_planning_downloader()
-
-    def _open_planning_downloader(self):
-        """Open or foreground only the Planning collection window."""
-        existing = self.planning_downloader_window
-        try:
-            if existing and existing.window.winfo_exists():
-                existing.show_downloader()
-                return existing
-        except Exception:
-            self.planning_downloader_window = None
-        self.planning_downloader_window = PlanningWindow(self.master)
-        self.planning_downloader_window.dashboard_result_callback = (
-            lambda payload: self.master.after(
-                0, lambda: self._module_payload_updated("planning", payload)
-            )
-        )
-        stored = self.result_repository.get_result("planning")
-        if stored and stored.payload.get("report_data"):
-            self.planning_downloader_window.load_results(
-                stored.payload["report_data"]
-            )
-        return self.planning_downloader_window
-
-    def _refresh_planning_in_report(self, report_window):
-        """Start Planning-only collection with progress shown in the report."""
-        existing = self.planning_downloader_window
-        try:
-            if not (existing and existing.window.winfo_exists()):
-                existing = None
-        except Exception:
-            existing = None
-        if existing is None:
-            existing = PlanningWindow(
-                self.master,
-                visible=False,
-                auto_open_report=False,
-            )
-            self.planning_downloader_window = existing
-            existing.dashboard_result_callback = (
-                lambda payload: self.master.after(
-                    0, lambda: self._module_payload_updated("planning", payload)
-                )
-            )
-        return existing.begin_background_refresh(report_window)
-
-    def _planning_open_target(self):
-        stored = self.result_repository.get_result("planning")
-        if stored is not None and stored.payload.get("report_data"):
-            return "results"
-        return "downloader"
-
     def _load_module_payload(self, key, module, payload):
-        if key == "planning":
-            module.load_results(payload.get("report_data"))
-            return
         arguments = [
             payload.get("stories") or [],
             payload.get("publish_results") or {},
@@ -771,11 +608,6 @@ class Dashboard(ctk.CTkFrame):
         completed = datetime.now().astimezone()
         count = int(payload.get("count") or len(payload.get("stories") or []))
         self.result_repository.set_result(key, payload, completed)
-        if key == "planning":
-            try:
-                self.planning_cache.save(payload["report_data"], completed)
-            except Exception:
-                LOGGER.exception("Could not persist manually refreshed Planning payload")
         from newsdesk.dashboard.models import DashboardRefreshResult
         result = DashboardRefreshResult(
             key, MODULE_NAMES[key], count=count, started_at=completed,
@@ -796,20 +628,7 @@ class Dashboard(ctk.CTkFrame):
                 output[key] = datetime.fromisoformat(raw) if raw else None
             except (TypeError, ValueError):
                 output[key] = None
-        cached = self.result_repository.get_result("planning")
-        if cached is not None:
-            output["planning"] = cached.completed_at
         return output
-
-    def _hydrate_planning_cache(self):
-        cached = self.planning_cache.load()
-        if cached is None:
-            return
-        self.result_repository.set_result(
-            "planning",
-            {"report_data": cached.report_data, "count": cached.count},
-            cached.completed_at,
-        )
 
     def _assess_startup_freshness(self):
         now = datetime.now().astimezone()

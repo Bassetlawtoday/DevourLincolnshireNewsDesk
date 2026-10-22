@@ -185,7 +185,18 @@ class SocialHandoffStore:
     def contains(self, identity: str) -> bool:
         return bool(identity and identity.casefold() in self.load())
 
-    def mark(self, identity: str, module_key: str) -> None:
+    def is_deleted(self, identity: str) -> bool:
+        """Return True only for a draft deliberately removed by an editor.
+
+        Older NewsDesk releases stored every handoff identically.  Those legacy
+        rows must not suppress automatic staging when no Social Desk draft was
+        actually retained.
+        """
+        key = str(identity or "").strip().casefold()
+        row = self.load().get(key, {}) if key else {}
+        return str(row.get("action") or "").strip().casefold() == "deleted"
+
+    def mark(self, identity: str, module_key: str, *, action: str = "staged") -> None:
         key = str(identity or "").strip().casefold()
         if not key:
             return
@@ -193,8 +204,12 @@ class SocialHandoffStore:
         rows[key] = {
             "module_key": str(module_key or "").strip().casefold(),
             "staged_at": datetime.now(timezone.utc).isoformat(),
+            "action": str(action or "staged").strip().casefold(),
         }
-        _atomic_json(self.path, {"schema_version": 1, "handoffs": rows})
+        _atomic_json(self.path, {"schema_version": 2, "handoffs": rows})
+
+    def mark_deleted(self, identity: str, module_key: str) -> None:
+        self.mark(identity, module_key, action="deleted")
 
 
 class SocialSettingsStore:
