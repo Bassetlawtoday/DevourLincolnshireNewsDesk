@@ -49,6 +49,18 @@ def _add_ldrs_author_credit(text: str, author: str) -> str:
     return f"{byline}\n\n{clean_text}".strip()
 
 
+def _prepend_source_headline(text: str, title: str) -> str:
+    """Put the exact Council/Police source headline above the source copy once."""
+    clean_title = " ".join(str(title or "").split()).strip()
+    clean_text = str(text or "").strip()
+    if not clean_title:
+        return clean_text
+    first_line = " ".join((clean_text.splitlines() or [""])[0].split()).strip()
+    if first_line.casefold() == clean_title.casefold():
+        return clean_text
+    return f"{clean_title}\n\n{clean_text}".strip()
+
+
 def _story_identity(story, module_key: str) -> str:
     """Return a permanent, non-public identity for refresh deduplication."""
     parts = (
@@ -104,6 +116,8 @@ def stage_story_for_social_desk(
         attribution = f"Posted by {author}"
         if attribution.casefold() not in text.casefold():
             text = f"{text}\n\n{attribution}".strip()
+    if module_key in {"council", "police"}:
+        text = _prepend_source_headline(text, title)
     if not title or not text:
         raise ValueError("The content needs a title and text before it can be staged.")
 
