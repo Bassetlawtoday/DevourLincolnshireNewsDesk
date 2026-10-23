@@ -321,9 +321,9 @@ class DashboardRefreshCoordinator:
     @staticmethod
     def _collect_content() -> tuple[int, dict]:
         from contentdesk.collector import ContentExplorerCollector
-        from contentdesk.config import load_api_key
+        from contentdesk.config import load_api_key, load_settings
         from contentdesk.storage import ContentStore
-        from modules.content import _story_from_row, get_current_content_stories
+        from modules.content import SCOPE_LIMITS, _story_from_row, get_current_content_stories
         from newsdesk.updates.content_gate import has_verified_full_content
         from newsdesk.social.selection import _story_identity
         from newsdesk.social.store import SocialHandoffStore
@@ -332,8 +332,14 @@ class DashboardRefreshCoordinator:
         if not key:
             raise RuntimeError("LDRS API key is not configured")
 
+        settings = load_settings()
+        scope = str(settings.get("default_scope") or "Latest 500").strip()
+        if scope not in SCOPE_LIMITS:
+            scope = "Latest 500"
+        listing_limit = SCOPE_LIMITS[scope]
+
         store = ContentStore()
-        run_id = store.start_run("Latest 100")
+        run_id = store.start_run(scope)
         rows = []
         stored = 0
         stage_stories = []
@@ -349,7 +355,7 @@ class DashboardRefreshCoordinator:
             with ContentExplorerCollector(
                 key, timeout=LDRS_REQUEST_TIMEOUT_SECONDS
             ) as collector:
-                rows = collector.collect_listings(limit=100)
+                rows = collector.collect_listings(limit=listing_limit)
                 for listing in rows:
                     article_id = str(listing.get("article_id") or "").strip()
                     existing_row = store.get(article_id) if article_id else None
@@ -419,7 +425,7 @@ class DashboardRefreshCoordinator:
         return int(store.summary()["count"]), {
             "stored": stored,
             "discovered": len(rows),
-            "scope": "Latest 100",
+            "scope": scope,
             "stories": all_stories,
             "stage_stories": stage_stories,
             "full_articles_staged": len(stage_stories),
