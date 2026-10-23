@@ -53,3 +53,12 @@ def test_remaining_collectors_start_only_after_ldrs_finishes():
     ]
     assert all(options == {"part_of_batch": True} for _key, options in started)
     assert dashboard._refresh_all_pending_keys == []
+
+
+def test_dashboard_ldrs_refresh_uses_module_scope():
+    source = Path("newsdesk/dashboard/refresh_coordinator.py").read_text(encoding="utf-8")
+    assert 'load_api_key, load_settings' in source
+    assert 'scope = str(settings.get("default_scope") or "Latest 500").strip()' in source
+    assert "collect_listings(limit=listing_limit)" in source
+    assert '"scope": scope' in source
+    assert 'collect_listings(limit=100)' not in source
