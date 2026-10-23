@@ -178,3 +178,10 @@ def test_incomplete_sport_story_is_retried_after_full_content_arrives(tmp_path, 
         "sport", {"stories": [complete]}
     ) == 1
     assert state_store.load()["modules"]["sport"]["social_stage_pending_keys"] == []
+
+
+def test_council_and_police_drafts_include_exact_source_headline_once():
+    source = Path("newsdesk/social/selection.py").read_text(encoding="utf-8")
+    assert "def _prepend_source_headline" in source
+    assert 'if module_key in {"council", "police"}:' in source
+    assert 'text = _prepend_source_headline(text, title)' in source
