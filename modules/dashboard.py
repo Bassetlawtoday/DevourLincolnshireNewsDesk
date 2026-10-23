@@ -92,6 +92,8 @@ class Dashboard(ctk.CTkFrame):
         self._closing = False
         self._run_started_at = None
         self._run_results = {}
+        self._refresh_all_running = False
+        self._refresh_all_pending_keys: list[str] = []
         self.pack(fill="both", expand=True)
         self._configure_window()
         self._build_layout()
@@ -302,18 +304,34 @@ class Dashboard(ctk.CTkFrame):
         self._render_recent_runs()
 
     def refresh_all(self):
-        if self._closing:
+        if self._closing or self._refresh_all_running:
             return
         self._run_started_at = datetime.now().astimezone()
         self._run_results = {}
-        for key in ("government", "council", "police", "sport", "content"):
-            self._start_refresh(key)
-        self.dashboard_status_label.configure(text="Refreshing modules…", text_color=WARNING)
+        self._refresh_all_running = True
+        self._refresh_all_pending_keys = [
+            "government", "council", "police", "sport"
+        ]
+        self.refresh_all_button.configure(
+            state="disabled", text="REFRESHING…"
+        )
+        # LDRS uses an authenticated browser and must not sit behind, or
+        # compete with, the other browser-heavy collectors.  Complete it
+        # first so Refresh All always performs the same LDRS update as the
+        # Local Democracy module's own UPDATE CONTENT button.
+        self._start_refresh("content", part_of_batch=True)
+        self.dashboard_status_label.configure(
+            text="Refreshing Local Democracy first…", text_color=WARNING
+        )
 
-    def _start_refresh(self, key):
+    def _start_refresh(self, key, *, part_of_batch=False):
         if key in self.futures and not self.futures[key].done():
             return
-        if not any(not future.done() for future in self.futures.values()):
+        if (
+            not part_of_batch
+            and not self._refresh_all_running
+            and not any(not future.done() for future in self.futures.values())
+        ):
             self._run_results = {}
             self._run_started_at = datetime.now().astimezone()
         if key in self.card_widgets:
@@ -356,16 +374,34 @@ class Dashboard(ctk.CTkFrame):
         except Exception as error:
             LOGGER.exception("Dashboard worker failed for %s", key)
             self.dashboard_status_label.configure(text=f"{MODULE_NAMES[key]} failed: {error}", text_color=ACCENT)
+            if key == "content":
+                self._start_refresh_all_followups()
             return
         if result is None:
+            if key == "content":
+                self._start_refresh_all_followups()
             return
         self._run_results[key] = result
         if key in self.card_widgets:
             self._update_card(result)
         elif key == "government":
             self._update_government_feed(result)
+        if key == "content":
+            self._start_refresh_all_followups()
         if not any(not value.done() for value in self.futures.values()):
             self._complete_dashboard_run()
+
+    def _start_refresh_all_followups(self):
+        if not self._refresh_all_running or not self._refresh_all_pending_keys:
+            return
+        pending = tuple(self._refresh_all_pending_keys)
+        self._refresh_all_pending_keys = []
+        self.dashboard_status_label.configure(
+            text="Local Democracy refreshed; refreshing remaining modules…",
+            text_color=WARNING,
+        )
+        for key in pending:
+            self._start_refresh(key, part_of_batch=True)
 
     def _update_card(self, result, load_open_module=True):
         widgets = self.card_widgets[result.module_key]
@@ -446,6 +482,12 @@ class Dashboard(ctk.CTkFrame):
             latest = max(successful_times)
             self.refresh_time_label.configure(text=f"Last successful dashboard refresh: {latest.astimezone().strftime('%d %b %Y %H:%M')}")
         self.dashboard_status_label.configure(text="Refresh completed" if status == "success" else "Refresh completed with source failures", text_color=SUCCESS if status == "success" else WARNING)
+        if self._refresh_all_running:
+            self._refresh_all_running = False
+            self._refresh_all_pending_keys = []
+            self.refresh_all_button.configure(
+                state="normal", text="REFRESH ALL"
+            )
         self._render_recent_runs()
         self._reschedule()
 
