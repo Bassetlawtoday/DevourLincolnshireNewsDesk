@@ -320,12 +320,11 @@ class DashboardRefreshCoordinator:
 
     @staticmethod
     def _collect_content() -> tuple[int, dict]:
-        from contentdesk.collector import ContentExplorerCollector
+        from contentdesk.collector import ContentExplorerCollector, _is_lincolnshire_record
         from contentdesk.config import load_api_key, load_settings
         from contentdesk.storage import ContentStore
         from modules.content import SCOPE_LIMITS, _story_from_row, get_current_content_stories
         from newsdesk.updates.content_gate import has_verified_full_content
-        from newsdesk.geography.lincolnshire import match_lincolnshire
         from newsdesk.social.selection import _story_identity
         from newsdesk.social.store import SocialHandoffStore
 
@@ -374,17 +373,7 @@ class DashboardRefreshCoordinator:
                 # budget on Lincolnshire candidates, not on the first national
                 # records returned by the API.
                 local_listings = [
-                    listing
-                    for listing in rows
-                    if match_lincolnshire(
-                        (
-                            " ".join(listing.get("authorities") or ()),
-                            listing.get("title"),
-                            listing.get("slug"),
-                            listing.get("summary"),
-                            listing.get("body"),
-                        )
-                    ).matched
+                    listing for listing in rows if _is_lincolnshire_record(listing)
                 ]
                 for listing in local_listings:
                     article_id = str(listing.get("article_id") or "").strip()
