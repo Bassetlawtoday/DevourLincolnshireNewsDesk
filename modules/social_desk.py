@@ -11,7 +11,7 @@ import customtkinter as ctk
 
 from newsdesk.social.metricool import MetricoolClient, MetricoolError, MetricoolImageError
 from newsdesk.social.hashtags import normalise_hashtags, suggest_instagram_hashtags
-from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialSettingsStore
+from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialHandoffStore, SocialSettingsStore
 from newsdesk.social.text import (
     BLUESKY_CHARACTER_LIMIT,
     bluesky_text_is_source_only,
@@ -33,6 +33,11 @@ NETWORKS = (
     ("Threads", "threads"), ("Bluesky", "bluesky"),
 )
 IMAGE_LIBRARY = Path(r"C:\Users\Windows\Desktop\Devour News Lincs Images")
+SOURCE_LABELS = {
+    "bbc": "BBC VIDEO", "content": "LDRS", "events": "EVENTS",
+    "planning": "PLANNING", "police": "POLICE", "fire": "FIRE",
+    "sport": "SPORT", "council": "COUNCIL", "blank": "BLANK",
+}
 
 
 class SocialDesk(ctk.CTkToplevel):
@@ -44,6 +49,10 @@ class SocialDesk(ctk.CTkToplevel):
         self.store = SocialDraftStore()
         self.settings_store = SocialSettingsStore()
         self.drafts = self.store.load()
+        handoffs = SocialHandoffStore()
+        for draft in self.drafts:
+            if draft.source_identity:
+                handoffs.mark(draft.source_identity, draft.source_kind)
         self.current: SocialDraft | None = None
         self.network_vars: dict[str, ctk.BooleanVar] = {}
         self.important_var = ctk.BooleanVar(value=False)
@@ -101,7 +110,7 @@ class SocialDesk(ctk.CTkToplevel):
         search.bind("<KeyRelease>", lambda _event: self._refresh_list())
         ctk.CTkOptionMenu(
             list_controls,
-            values=["BBC VIDEO", "ALL", "LOCAL DEMOCRACY", "EVENTS", "PLANNING", "POLICE", "FIRE", "SPORT", "COUNCIL", "BLANK"],
+            values=["BBC VIDEO", "ALL", "LDRS", "EVENTS", "PLANNING", "POLICE", "FIRE", "SPORT", "COUNCIL", "BLANK"],
             variable=self.draft_filter_var,
             command=lambda _value: self._refresh_list(),
             width=145,
@@ -114,6 +123,11 @@ class SocialDesk(ctk.CTkToplevel):
         form = ctk.CTkScrollableFrame(right, fg_color="transparent")
         form.pack(fill="both", expand=True, padx=20, pady=(14, 8))
         self.title_entry = self._entry(form, "Working title (not sent to social networks)")
+        self.provenance_label = ctk.CTkLabel(
+            form, text="CONTENT SOURCE: BLANK", text_color=TEXT_MUTED,
+            font=("Arial", 13, "bold"), anchor="w",
+        )
+        self.provenance_label.pack(fill="x", pady=(7, 0))
         ctk.CTkLabel(form, text="Post text", text_color=TEXT_SECONDARY, anchor="w").pack(fill="x", pady=(10, 4))
         self.text_box = ctk.CTkTextbox(form, height=150, fg_color=CARD_BG, border_width=1, border_color=BORDER, text_color=TEXT_PRIMARY)
         self.text_box.pack(fill="x")
@@ -217,7 +231,11 @@ class SocialDesk(ctk.CTkToplevel):
         ctk.CTkButton(actions, text="SAVE LOCAL DRAFT", width=155, fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER, command=self._save).pack(side="left", padx=(0, 8))
         self.send_button = ctk.CTkButton(actions, text="SEND TO METRICOOL AS DRAFT", width=230, fg_color=BRAND_RED, hover_color=BRAND_RED_HOVER, command=self._send)
         self.send_button.pack(side="left", padx=(0, 8))
-        ctk.CTkButton(actions, text="DELETE LOCAL DRAFT", width=160, fg_color="#475569", command=self._delete).pack(side="left")
+        ctk.CTkButton(actions, text="DELETE LOCAL DRAFT", width=160, fg_color="#475569", command=self._delete).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            actions, text="CLEAR ALL", width=115, fg_color=BRAND_RED,
+            hover_color=BRAND_RED_HOVER, command=self._clear_all,
+        ).pack(side="left")
         self.editor_status = ctk.CTkLabel(right, text="Create a local draft or import NewsDesk content.", text_color=TEXT_MUTED, anchor="w")
         self.editor_status.pack(fill="x", padx=20, pady=(0, 10))
         self._new()
@@ -244,14 +262,9 @@ class SocialDesk(ctk.CTkToplevel):
         for child in self.list_frame.winfo_children(): child.destroy()
         query = self.draft_search_var.get().strip().casefold()
         selected_source = self.draft_filter_var.get().strip().upper()
-        source_labels = {"bbc": "BBC VIDEO", 
-            "content": "LOCAL DEMOCRACY", "events": "EVENTS",
-            "planning": "PLANNING", "police": "POLICE", "fire": "FIRE",
-            "sport": "SPORT", "council": "COUNCIL", "blank": "BLANK",
-        }
         drafts = []
         for draft in self.drafts:
-            source = source_labels.get(draft.source_kind.casefold(), "BLANK")
+            source = SOURCE_LABELS.get(draft.source_kind.casefold(), "BLANK")
             if selected_source != "ALL" and source != selected_source:
                 continue
             if query and query not in f"{draft.title} {draft.text} {source}".casefold():
@@ -304,6 +317,8 @@ class SocialDesk(ctk.CTkToplevel):
 
     def _populate(self):
         draft = self.current or SocialDraft()
+        source = SOURCE_LABELS.get(str(draft.source_kind or "blank").casefold(), "BLANK")
+        self.provenance_label.configure(text=f"CONTENT SOURCE: {source}")
         # The original article URL lives in its dedicated field and is added
         # automatically at send time. Other useful URLs remain in the copy.
         excluded_url = draft.internal_source_url or draft.source_url
@@ -429,9 +444,42 @@ class SocialDesk(ctk.CTkToplevel):
 
     def _delete(self):
         if not self.current or not any(item.draft_id == self.current.draft_id for item in self.drafts): return
-        if not messagebox.askyesno("Social Desk", "Delete this local draft?", parent=self): return
+        if not messagebox.askyesno("Delete local draft", "Delete this local Social Desk draft?", parent=self): return
+        if not messagebox.askyesno("Confirm deletion", "Are you sure? This removes the local copy and cannot be undone.", parent=self): return
+        if self.current.source_identity:
+            SocialHandoffStore().mark_deleted(
+                self.current.source_identity, self.current.source_kind
+            )
         self.drafts = [item for item in self.drafts if item.draft_id != self.current.draft_id]
         self.store.save(self.drafts); self._refresh_list(); self._new()
+
+    def _clear_all(self):
+        if not self.drafts:
+            messagebox.showinfo("Social Desk", "There are no local drafts to clear.", parent=self)
+            return
+        count = len(self.drafts)
+        if not messagebox.askyesno(
+            "Clear all local drafts",
+            f"Clear all {count} local Social Desk drafts?\n\nThis does not delete anything from Metricool or social networks.",
+            parent=self,
+        ):
+            return
+        if not messagebox.askyesno(
+            "Final confirmation",
+            "FINAL CHECK: permanently remove every local Social Desk draft?",
+            icon="warning",
+            parent=self,
+        ):
+            return
+        handoffs = SocialHandoffStore()
+        for draft in self.drafts:
+            if draft.source_identity:
+                handoffs.mark_deleted(draft.source_identity, draft.source_kind)
+        self.drafts = []
+        self.store.save([])
+        self._refresh_list()
+        self._new()
+        self.editor_status.configure(text=f"Cleared {count} local drafts.", text_color=TEXT_MUTED)
 
     def _send(self):
         if not self._save(): return

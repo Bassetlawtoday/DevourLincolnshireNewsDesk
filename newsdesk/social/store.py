@@ -6,7 +6,7 @@ import base64
 import ctypes
 from ctypes import wintypes
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -94,7 +94,9 @@ class SocialDraft:
     timezone: str = "Europe/London"
     status: str = "local draft"
     metricool_id: str = ""
-    # Permanent link back to the central Updates Desk queue.
+    # Stable collector identity used to prevent repeat staging across refreshes.
+    source_identity: str = ""
+    # Retained for backwards compatibility with drafts created by Updates Desk.
     origin_updates_id: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -119,9 +121,36 @@ class SocialDraftStore:
     def save(self, drafts: list[SocialDraft]) -> None:
         _atomic_json(self.path, {"schema_version": 2, "drafts": [asdict(item) for item in drafts]})
 
+    def purge_older_than(self, days: int = 7, *, now: datetime | None = None) -> int:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cutoff = current - timedelta(days=days)
+        drafts = self.load()
+        kept = []
+        for draft in drafts:
+            try:
+                stamp = datetime.fromisoformat(str(draft.created_at).replace("Z", "+00:00"))
+                stamp = stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                stamp = current
+            if stamp >= cutoff:
+                kept.append(draft)
+        removed = len(drafts) - len(kept)
+        if removed:
+            self.save(kept)
+        return removed
+
     @staticmethod
     def normalise_url(value: str) -> str:
         return str(value or "").strip().rstrip("/").casefold()
+
+    def find_by_source_identity(self, drafts: list[SocialDraft], identity: str) -> SocialDraft | None:
+        wanted = str(identity or "").strip().casefold()
+        if not wanted:
+            return None
+        return next(
+            (item for item in drafts if str(item.source_identity or "").strip().casefold() == wanted),
+            None,
+        )
 
     def find_by_source_url(self, drafts: list[SocialDraft], source_url: str) -> SocialDraft | None:
         wanted = self.normalise_url(source_url)
@@ -137,6 +166,50 @@ class SocialDraftStore:
             ),
             None,
         )
+
+
+class SocialHandoffStore:
+    """Content-free record of stories already handed to Social Desk."""
+
+    def __init__(self, path: Path | None = None) -> None:
+        self.path = path or SOCIAL_DIR / "handoffs.json"
+
+    def load(self) -> dict[str, dict[str, str]]:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            rows = payload.get("handoffs", {})
+            return rows if isinstance(rows, dict) else {}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return {}
+
+    def contains(self, identity: str) -> bool:
+        return bool(identity and identity.casefold() in self.load())
+
+    def is_deleted(self, identity: str) -> bool:
+        """Return True only for a draft deliberately removed by an editor.
+
+        Older NewsDesk releases stored every handoff identically.  Those legacy
+        rows must not suppress automatic staging when no Social Desk draft was
+        actually retained.
+        """
+        key = str(identity or "").strip().casefold()
+        row = self.load().get(key, {}) if key else {}
+        return str(row.get("action") or "").strip().casefold() == "deleted"
+
+    def mark(self, identity: str, module_key: str, *, action: str = "staged") -> None:
+        key = str(identity or "").strip().casefold()
+        if not key:
+            return
+        rows = self.load()
+        rows[key] = {
+            "module_key": str(module_key or "").strip().casefold(),
+            "staged_at": datetime.now(timezone.utc).isoformat(),
+            "action": str(action or "staged").strip().casefold(),
+        }
+        _atomic_json(self.path, {"schema_version": 2, "handoffs": rows})
+
+    def mark_deleted(self, identity: str, module_key: str) -> None:
+        self.mark(identity, module_key, action="deleted")
 
 
 class SocialSettingsStore:

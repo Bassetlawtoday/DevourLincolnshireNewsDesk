@@ -2,79 +2,41 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
 from typing import Callable
 
-from newsdesk.services.fire_service import FireCollectionService
 from newsdesk.services.council_service import CouncilCollectionService
 from newsdesk.services.police_collection import PoliceCollectionService
 from newsdesk.services.sport_collection import SportCollectionService
-from services.planning_engine import run_weekly_download
 
 from .government_feed import GovernmentFeedService
 from .models import DashboardRefreshResult
-from .planning_cache import PlanningResultCache
 from .registry import MODULE_NAMES
 from .result_repository import DashboardResultRepository
 from .state_store import DashboardStateStore
 
 
 LOGGER = logging.getLogger(__name__)
-class _NullWidget:
-    def configure(self, **_kwargs) -> None:
-        pass
-
-
-class _PlanningAdapter:
-    """Supplies established Planning UI callbacks without touching Tk."""
-
-    def __init__(self) -> None:
-        self.downloaded = _NullWidget()
-        self.newsworthiness = _NullWidget()
-        self.report_data = None
-
-    def write_log(self, message: str) -> None:
-        LOGGER.debug("Planning dashboard refresh: %s", message)
-
-    def set_progress(self, *_args) -> None:
-        pass
-
-    def set_status(self, *_args) -> None:
-        pass
-
-    def set_current_application(self, *_args) -> None:
-        pass
-
-    def set_list_progress(self, *_args) -> None:
-        pass
-
-    def set_report_data(self, value) -> None:
-        self.report_data = value
-
-
+LDRS_DETAIL_LIMIT_PER_REFRESH = 12
+LDRS_REQUEST_TIMEOUT_SECONDS = 15
 class DashboardRefreshCoordinator:
     def __init__(
         self,
         state_store: DashboardStateStore | None = None,
         collectors: dict[str, Callable[[], object]] | None = None,
         result_repository: DashboardResultRepository | None = None,
-        planning_cache: PlanningResultCache | None = None,
     ) -> None:
         self.state_store = state_store or DashboardStateStore()
         self.result_repository = result_repository or DashboardResultRepository()
-        self.planning_cache = planning_cache or PlanningResultCache()
-        self.latest_planning_cache_error = ""
         self._lock = threading.Lock()
         self._running: set[str] = set()
         self.latest_government_result = None
         self.government_hours = 48
         self.collectors = collectors or {
-            "planning": self._collect_planning,
             "police": self._collect_police,
-            "fire": self._collect_fire,
             "sport": self._collect_sport,
             "council": self._collect_council,
             "government": self._collect_government,
@@ -86,6 +48,8 @@ class DashboardRefreshCoordinator:
             return module_key in self._running
 
     def refresh_module(self, module_key: str) -> DashboardRefreshResult | None:
+        if module_key not in self.collectors or module_key not in MODULE_NAMES:
+            raise ValueError(f"Module is not active: {module_key}")
         with self._lock:
             if module_key in self._running:
                 return None
@@ -95,6 +59,15 @@ class DashboardRefreshCoordinator:
         try:
             collected = self.collectors[module_key]()
             result.count, payload = self._count_and_payload(collected)
+            if module_key in {"police", "sport", "council", "content"} and isinstance(payload, dict):
+                stories = list(payload.get("stories") or [])
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                retained = [
+                    story for story in stories
+                    if (self._story_date(story) is None or self._story_date(story) >= cutoff)
+                ]
+                payload["stories"] = retained
+                result.count = len(retained)
             result.success = True
         except Exception as error:
             result.error_message = str(error)[:240] or error.__class__.__name__
@@ -107,33 +80,97 @@ class DashboardRefreshCoordinator:
             result.item_keys = self.item_keys(module_key, payload)
             result.updates_date = result.completed_at.astimezone().date().isoformat()
         if result.success and payload is not None:
-            if module_key in {"police", "fire", "sport", "council"}:
+            if module_key in {"police", "sport", "council", "content"}:
                 try:
-                    from newsdesk.updates.store import UpdatesStore
-                    UpdatesStore().ingest(
-                        module_key, payload.get("stories") or []
-                    )
+                    self._stage_new_social_drafts(module_key, payload)
                 except Exception:
-                    # Updates Desk is an auxiliary review queue.  A storage
-                    # problem must never turn a successful source refresh into
-                    # a Police/Fire/Sport/Council failure.
+                    # Social Desk is an editorial staging queue. A local draft
+                    # storage problem must not turn a successful source refresh
+                    # into a source failure.
                     LOGGER.exception(
-                        "Could not add %s refresh to Updates Desk", module_key
+                        "Could not stage %s refresh in Social Desk", module_key
                     )
-            if module_key == "planning":
-                try:
-                    self.planning_cache.save(
-                        payload["report_data"], result.completed_at
-                    )
-                    self.latest_planning_cache_error = ""
-                except Exception as error:
-                    self.latest_planning_cache_error = str(error)[:240]
-                    LOGGER.exception("Could not persist Planning briefing cache")
             self.result_repository.set_result(
                 module_key, payload, result.completed_at
             )
         self.record_result(result)
         return result
+
+    def _stage_new_social_drafts(self, module_key: str, payload: dict) -> int:
+        """Stage only newly discovered stories, without overwriting editors."""
+        from newsdesk.social.selection import _story_identity, stage_story_for_social_desk
+        from newsdesk.social.store import SocialDraftStore, SocialHandoffStore
+        from newsdesk.social.text import clean_social_text
+        from newsdesk.updates.content_gate import has_verified_full_content
+
+        stories = payload.get("stage_stories")
+        if stories is None:
+            all_stories = list(payload.get("stories") or [])
+            state = self.state_store.load()
+            previous = (state.get("modules") or {}).get(module_key, {})
+            known = set(previous.get("known_item_keys") or ())
+            pending = set(previous.get("social_stage_pending_keys") or ())
+            # The first successful refresh establishes a baseline. This avoids
+            # flooding Social Desk with the complete historical source archive.
+            if not known:
+                return 0
+            stories = []
+            next_pending = set()
+            social_store = SocialDraftStore()
+            drafts = social_store.load() if module_key == "sport" else []
+            for story in all_stories:
+                story_keys = set(self.item_keys(module_key, {"stories": [story]}))
+                is_new_or_pending = bool(story_keys - known or story_keys & pending)
+
+                # A previous release could stage a listing teaser when it
+                # already had an image. Upgrade only an untouched, unsent Sport
+                # draft whose text is still exactly that source teaser.
+                safe_teaser_upgrade = False
+                if module_key == "sport" and has_verified_full_content("sport", story):
+                    source_url = str(getattr(story, "url", "") or "").strip()
+                    existing = social_store.find_by_source_url(drafts, source_url)
+                    expected_teaser = clean_social_text(
+                        getattr(story, "summary", ""), source_url=source_url
+                    )
+                    safe_teaser_upgrade = bool(
+                        existing
+                        and not str(existing.metricool_id or "").strip()
+                        and str(existing.status or "") == "Sport draft"
+                        and " ".join(str(existing.text or "").split()).casefold()
+                        == " ".join(expected_teaser.split()).casefold()
+                    )
+
+                if module_key == "sport" and not has_verified_full_content("sport", story):
+                    if is_new_or_pending:
+                        next_pending.update(story_keys)
+                    continue
+                if is_new_or_pending or safe_teaser_upgrade:
+                    stories.append((story, safe_teaser_upgrade))
+
+            if module_key == "sport":
+                state.setdefault("modules", {}).setdefault(module_key, {})[
+                    "social_stage_pending_keys"
+                ] = sorted(next_pending)
+                self.state_store.save(state)
+        else:
+            stories = [(story, False) for story in stories]
+
+        handoffs = SocialHandoffStore()
+        created = 0
+        upgraded = 0
+        for story, safe_teaser_upgrade in stories:
+            if handoffs.is_deleted(_story_identity(story, module_key)) and not safe_teaser_upgrade:
+                continue
+            _draft, was_created = stage_story_for_social_desk(
+                story,
+                module_key=module_key,
+                update_existing=safe_teaser_upgrade,
+            )
+            created += int(was_created)
+            upgraded += int(safe_teaser_upgrade and not was_created)
+        payload["social_drafts_staged"] = created
+        payload["social_drafts_upgraded"] = upgraded
+        return created
 
     def record_result(self, result: DashboardRefreshResult) -> None:
         with self._lock:
@@ -213,27 +250,19 @@ class DashboardRefreshCoordinator:
     def item_keys(cls, module_key: str, payload: object | None) -> list[str]:
         if not isinstance(payload, dict):
             return []
-        if module_key == "planning":
-            report = payload.get("report_data") or {}
-            items = report.get("all_applications") or [] if isinstance(report, dict) else []
-            identities = (
-                (item.get("reference"), item.get("address"), item.get("proposal"))
-                for item in items if isinstance(item, dict)
+        items = payload.get("stories") or []
+        identities = (
+            (
+                item.get("story_id") or item.get("url") or item.get("title"),
+                item.get("source"),
+            ) if isinstance(item, dict) else (
+                getattr(item, "story_id", "")
+                or getattr(item, "url", "")
+                or getattr(item, "title", ""),
+                getattr(item, "source", ""),
             )
-        else:
-            items = payload.get("stories") or []
-            identities = (
-                (
-                    item.get("story_id") or item.get("url") or item.get("title"),
-                    item.get("source"),
-                ) if isinstance(item, dict) else (
-                    getattr(item, "story_id", "")
-                    or getattr(item, "url", "")
-                    or getattr(item, "title", ""),
-                    getattr(item, "source", ""),
-                )
-                for item in items
-            )
+            for item in items
+        )
         keys = []
         for identity in identities:
             normalised = "|".join(
@@ -251,26 +280,8 @@ class DashboardRefreshCoordinator:
         return int(collected), None
 
     @staticmethod
-    def _collect_planning() -> tuple[int, dict]:
-        adapter = _PlanningAdapter()
-        count = int(run_weekly_download(adapter))
-        return count, {
-            "report_data": adapter.report_data,
-            "count": count,
-        }
-
-    @staticmethod
     def _collect_police() -> tuple[int, dict]:
         collection = PoliceCollectionService().collect()
-        return collection.collected_count, {
-            "stories": collection.stories,
-            "publish_results": collection.publish_results,
-            "errors": collection.errors,
-        }
-
-    @staticmethod
-    def _collect_fire() -> tuple[int, dict]:
-        collection = FireCollectionService().collect()
         return collection.collected_count, {
             "stories": collection.stories,
             "publish_results": collection.publish_results,
@@ -284,6 +295,7 @@ class DashboardRefreshCoordinator:
             "stories": collection.stories,
             "publish_results": collection.publish_results,
             "errors": collection.errors,
+            "source_health": collection.source_health,
         }
 
     @staticmethod
@@ -307,41 +319,152 @@ class DashboardRefreshCoordinator:
         return len(announcements), {"announcements": announcements}
 
     @staticmethod
-    def _collect_events() -> tuple[int, dict]:
-        from eventsdesk.harvest_engine import MidlandsHarvestEngine
-        from eventsdesk.source_catalog import SourceCatalog
-        from eventsdesk.source_scope import enabled_sources
-        from modules.events import EVENTS_DATA_DIR, EVENTS_DATABASE, EVENTS_SUMMARY, get_event_dashboard_summary, get_current_event_stories
-        selected = enabled_sources(SourceCatalog.load_default(), EVENTS_DATA_DIR)
-        if not selected:
-            raise RuntimeError("No EventsDesk sources are enabled")
-        result = MidlandsHarvestEngine().harvest(
-            database=str(EVENTS_DATABASE), output=str(EVENTS_SUMMARY),
-            source_ids=[source.id for source in selected], skip_network_preflight=False,
-        )
-        from newsdesk.updates.store import UpdatesStore
-        UpdatesStore().ingest("events", get_current_event_stories())
-        return int(get_event_dashboard_summary()["count"]), {"summary": result}
-
-    @staticmethod
     def _collect_content() -> tuple[int, dict]:
-        from contentdesk.collector import ContentExplorerCollector
-        from contentdesk.config import load_api_key
+        from contentdesk.collector import ContentExplorerCollector, _is_lincolnshire_record
+        from contentdesk.config import load_api_key, load_settings
         from contentdesk.storage import ContentStore
+        from modules.content import SCOPE_LIMITS, _story_from_row, get_current_content_stories
+        from newsdesk.updates.content_gate import has_verified_full_content
+        from newsdesk.social.selection import _story_identity
+        from newsdesk.social.store import SocialHandoffStore
+
         key = load_api_key()
         if not key:
             raise RuntimeError("LDRS API key is not configured")
-        with ContentExplorerCollector(key) as collector:
-            rows = collector.collect_listings(limit=100)
+
+        settings = load_settings()
+        scope = str(settings.get("default_scope") or "Latest 500").strip()
+        if scope not in SCOPE_LIMITS:
+            scope = "Latest 500"
+        listing_limit = SCOPE_LIMITS[scope]
+
         store = ContentStore()
-        run_id = store.start_run("Latest 100")
+        run_id = store.start_run(scope)
+        rows = []
+        stored = 0
+        stage_stories = []
+        detail_errors = []
+        deferred_details = 0
+        detail_attempts = 0
+        repaired = 0
+        handed_off = 0
+        outside_window = 0
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        handoffs = SocialHandoffStore()
         try:
-            stored = store.upsert_many(rows)
-            store.finish_run(run_id, discovered=len(rows), stored=stored, status="success")
+            with ContentExplorerCollector(
+                key, timeout=LDRS_REQUEST_TIMEOUT_SECONDS
+            ) as collector:
+                rows = collector.collect_listings(limit=listing_limit)
+
+                # Match the working Local Democracy module: persist every
+                # listing before attempting any bounded detail downloads.
+                # Otherwise records after the detail limit disappear entirely.
+                existing_rows = {
+                    str(listing.get("article_id") or "").strip(): store.get(
+                        str(listing.get("article_id") or "").strip()
+                    )
+                    for listing in rows
+                    if str(listing.get("article_id") or "").strip()
+                }
+                stored = store.upsert_many(rows)
+
+                # The LDRS feed is national. Spend the bounded detail-download
+                # budget on Lincolnshire candidates, not on the first national
+                # records returned by the API.
+                local_listings = [
+                    listing for listing in rows if _is_lincolnshire_record(listing)
+                ]
+                for listing in local_listings:
+                    article_id = str(listing.get("article_id") or "").strip()
+                    existing_row = existing_rows.get(article_id)
+                    existing_story = _story_from_row(existing_row) if existing_row else None
+                    needs_detail = (
+                        existing_story is None
+                        or not has_verified_full_content("content", existing_story)
+                    )
+                    if not needs_detail:
+                        store.upsert_many([listing])
+                        story = existing_story
+                        stamp = DashboardRefreshCoordinator._story_date(story)
+                        if stamp and stamp < cutoff:
+                            outside_window += 1
+                        elif handoffs.is_deleted(_story_identity(story, "content")):
+                            handed_off += 1
+                        else:
+                            stage_stories.append(story)
+                        continue
+                    if detail_attempts >= LDRS_DETAIL_LIMIT_PER_REFRESH:
+                        deferred_details += 1
+                        continue
+                    detail_attempts += 1
+                    try:
+                        detail = collector.fetch_detail(article_id)
+                        complete = {**listing, **detail}
+                        for field in ("authorities", "categories"):
+                            if not complete.get(field):
+                                complete[field] = listing.get(field) or []
+                        if not str(complete.get("body") or "").strip():
+                            raise RuntimeError("LDRS full article body was empty")
+                        store.upsert_many([complete])
+                        stored_row = store.get(article_id)
+                        if stored_row is None:
+                            raise RuntimeError("LDRS full article was not stored")
+                        story = _story_from_row(stored_row)
+                        if not has_verified_full_content("content", story):
+                            raise RuntimeError("LDRS article did not pass the full-content check")
+                        stamp = DashboardRefreshCoordinator._story_date(story)
+                        if stamp and stamp < cutoff:
+                            outside_window += 1
+                        elif handoffs.is_deleted(_story_identity(story, "content")):
+                            handed_off += 1
+                        else:
+                            stage_stories.append(story)
+                        repaired += int(existing_row is not None)
+                    except Exception as error:
+                        detail_errors.append(f"{article_id}: {error}")
+                        LOGGER.exception(
+                            "Could not download complete LDRS article %s; it was not staged",
+                            article_id,
+                        )
+            store.finish_run(
+                run_id, discovered=len(rows), stored=stored, status="success"
+            )
         except Exception as exc:
-            store.finish_run(run_id, discovered=0, stored=0, status="failed", message=str(exc))
+            store.finish_run(
+                run_id,
+                discovered=len(rows),
+                stored=stored,
+                status="failed",
+                message=str(exc),
+            )
             raise
-        from modules.content import get_current_content_stories
-        from newsdesk.updates.store import UpdatesStore
-        UpdatesStore().ingest("content", get_current_content_stories())
-        return int(store.summary()["count"]), {"stored": stored, "discovered": len(rows), "scope": "Latest 100"}
+
+        all_stories = get_current_content_stories()
+        return int(store.summary()["count"]), {
+            "stored": stored,
+            "discovered": len(rows),
+            "scope": scope,
+            "stories": all_stories,
+            "stage_stories": stage_stories,
+            "full_articles_staged": len(stage_stories),
+            "stored_articles_repaired": repaired,
+            "detail_downloads_attempted": detail_attempts,
+            "detail_downloads_deferred": deferred_details,
+            "already_handed_off": handed_off,
+            "outside_recovery_window": outside_window,
+            "detail_errors": detail_errors,
+            "errors": detail_errors,
+        }
+
+    @staticmethod
+    def _story_date(story) -> datetime | None:
+        value = str(getattr(story, "published", "") or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+

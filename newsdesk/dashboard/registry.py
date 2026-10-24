@@ -20,11 +20,7 @@ class DashboardModuleDefinition:
 
 
 MODULE_DEFINITIONS = (
-    DashboardModuleDefinition(
-        "planning", "Planning Intelligence", "heavy", planning_special=True
-    ),
     DashboardModuleDefinition("police", "Police Intelligence", "heavy"),
-    DashboardModuleDefinition("fire", "Fire Intelligence", "light"),
     DashboardModuleDefinition("sport", "Sport Intelligence", "heavy"),
     DashboardModuleDefinition(
         "council",
@@ -38,10 +34,6 @@ MODULE_DEFINITIONS = (
         "Government / National Announcements",
         "light",
         show_card=False,
-    ),
-    DashboardModuleDefinition(
-        "events", "Events Intelligence", "heavy", show_card=False,
-        default_schedule="Every 12 hours",
     ),
     DashboardModuleDefinition(
         "content", "Local Democracy Intelligence", "heavy", show_card=False,
