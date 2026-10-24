@@ -64,3 +64,14 @@ def test_dashboard_ldrs_refresh_uses_module_scope():
     assert "collect_listings(limit=listing_limit)" in source
     assert '"scope": scope' in source
     assert 'collect_listings(limit=100)' not in source
+
+
+def test_dashboard_stores_all_ldrs_listings_before_bounded_local_details():
+    source = Path("newsdesk/dashboard/refresh_coordinator.py").read_text(encoding="utf-8")
+    store_all = source.index("stored = store.upsert_many(rows)")
+    local_filter = source.index("local_listings = [")
+    detail_loop = source.index("for listing in local_listings:")
+    detail_limit = source.index("if detail_attempts >= LDRS_DETAIL_LIMIT_PER_REFRESH:")
+    assert store_all < local_filter < detail_loop < detail_limit
+    assert "_is_lincolnshire_record(listing)" in source
+    assert "for listing in rows:\n                    article_id" not in source
