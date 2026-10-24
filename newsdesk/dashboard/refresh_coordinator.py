@@ -325,6 +325,7 @@ class DashboardRefreshCoordinator:
         from contentdesk.storage import ContentStore
         from modules.content import SCOPE_LIMITS, _story_from_row, get_current_content_stories
         from newsdesk.updates.content_gate import has_verified_full_content
+        from newsdesk.geography.lincolnshire import match_lincolnshire
         from newsdesk.social.selection import _story_identity
         from newsdesk.social.store import SocialHandoffStore
 
@@ -356,16 +357,45 @@ class DashboardRefreshCoordinator:
                 key, timeout=LDRS_REQUEST_TIMEOUT_SECONDS
             ) as collector:
                 rows = collector.collect_listings(limit=listing_limit)
-                for listing in rows:
+
+                # Match the working Local Democracy module: persist every
+                # listing before attempting any bounded detail downloads.
+                # Otherwise records after the detail limit disappear entirely.
+                existing_rows = {
+                    str(listing.get("article_id") or "").strip(): store.get(
+                        str(listing.get("article_id") or "").strip()
+                    )
+                    for listing in rows
+                    if str(listing.get("article_id") or "").strip()
+                }
+                stored = store.upsert_many(rows)
+
+                # The LDRS feed is national. Spend the bounded detail-download
+                # budget on Lincolnshire candidates, not on the first national
+                # records returned by the API.
+                local_listings = [
+                    listing
+                    for listing in rows
+                    if match_lincolnshire(
+                        (
+                            " ".join(listing.get("authorities") or ()),
+                            listing.get("title"),
+                            listing.get("slug"),
+                            listing.get("summary"),
+                            listing.get("body"),
+                        )
+                    ).matched
+                ]
+                for listing in local_listings:
                     article_id = str(listing.get("article_id") or "").strip()
-                    existing_row = store.get(article_id) if article_id else None
+                    existing_row = existing_rows.get(article_id)
                     existing_story = _story_from_row(existing_row) if existing_row else None
                     needs_detail = (
                         existing_story is None
                         or not has_verified_full_content("content", existing_story)
                     )
                     if not needs_detail:
-                        stored += store.upsert_many([listing])
+                        store.upsert_many([listing])
                         story = existing_story
                         stamp = DashboardRefreshCoordinator._story_date(story)
                         if stamp and stamp < cutoff:
@@ -387,7 +417,7 @@ class DashboardRefreshCoordinator:
                                 complete[field] = listing.get(field) or []
                         if not str(complete.get("body") or "").strip():
                             raise RuntimeError("LDRS full article body was empty")
-                        stored += store.upsert_many([complete])
+                        store.upsert_many([complete])
                         stored_row = store.get(article_id)
                         if stored_row is None:
                             raise RuntimeError("LDRS full article was not stored")
