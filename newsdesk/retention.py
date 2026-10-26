@@ -12,7 +12,7 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-POLICY_VERSION = "1.2 — 20 October 2026"
+POLICY_VERSION = "1.3 — 26 October 2026"
 POLICY_MARKDOWN = PROJECT_ROOT / "docs" / "NEWSDESK_DATA_RETENTION_POLICY.md"
 POLICY_HTML = PROJECT_ROOT / "docs" / "NEWSDESK_DATA_RETENTION_POLICY.html"
 AUDIT_PATH = PROJECT_ROOT / "data" / "retention" / "cleanup_audit.jsonl"
@@ -20,8 +20,6 @@ AUDIT_PATH = PROJECT_ROOT / "data" / "retention" / "cleanup_audit.jsonl"
 RETENTION_SCHEDULE = (
     ("Active Council, Police, Sport and Local Democracy module content", "7 days"),
     ("LDRS author/reviewer email addresses", "Not retained"),
-    ("Expired EventsDesk events", "90 days unless newsletter-selected"),
-    ("Planning records after conclusion", "12 months"),
     ("Facebook working records", "30 days"),
     ("Social Desk local copies", "7 days; remote Metricool/social posts are unaffected"),
     ("Temporary source-image cache", "14 days"),
@@ -47,38 +45,7 @@ def _parse(value: Any) -> datetime | None:
         return None
 
 
-def _newsletter_protection(root: Path) -> tuple[set[str], set[str], set[str]]:
-    content_ids: set[str] = set()
-    event_ids: set[str] = set()
-    planning_refs: set[str] = set()
-    path = root / "data" / "newsletter" / "editions.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return content_ids, event_ids, planning_refs
-    editions = payload.get("editions", payload) if isinstance(payload, dict) else payload
-    for edition in editions if isinstance(editions, list) else []:
-        for item in edition.get("items", []) if isinstance(edition, dict) else []:
-            if not isinstance(item, dict):
-                continue
-            module = str(item.get("module_key") or "").casefold()
-            story_id = str(item.get("source_story_id") or "").strip()
-            identity = str(item.get("source_identity") or "")
-            if module == "content" and story_id:
-                content_ids.add(story_id)
-            elif module == "events" and story_id:
-                event_ids.add(story_id)
-            elif module == "planning" and story_id:
-                planning_refs.add(story_id.casefold())
-            if identity:
-                if "content" in identity.casefold():
-                    content_ids.add(identity.rsplit(":", 1)[-1])
-                if "event" in identity.casefold():
-                    event_ids.add(identity.rsplit(":", 1)[-1])
-    return content_ids, event_ids, planning_refs
-
-
-def _content_cleanup(root: Path, now: datetime, protected: set[str], dry_run: bool) -> dict[str, int]:
+def _content_cleanup(root: Path, now: datetime, dry_run: bool) -> dict[str, int]:
     result = {"emails_removed": 0, "full_articles_minimised": 0, "metadata_removed": 0}
     path = root / "data" / "contentdesk" / "contentdesk.sqlite"
     if not path.exists():
@@ -101,51 +68,6 @@ def _content_cleanup(root: Path, now: datetime, protected: set[str], dry_run: bo
         if not dry_run:
             connection.execute("DELETE FROM content_sync_runs WHERE started_at < ?", (cutoff_full,))
     return result
-
-
-def _event_cleanup(root: Path, now: datetime, protected: set[str], dry_run: bool) -> int:
-    path = root / "data" / "eventsdesk" / "eventsdesk.sqlite"
-    if not path.exists():
-        return 0
-    cutoff = (now - timedelta(days=90)).isoformat()
-    removed = 0
-    with sqlite3.connect(path) as connection:
-        connection.execute("PRAGMA foreign_keys=ON")
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(events)")}
-        if not columns:
-            return 0
-        date_columns = [name for name in ("end", "start", "end_at", "end_datetime", "start_at", "start_datetime", "last_seen_at", "last_seen") if name in columns]
-        if not date_columns:
-            return 0
-        expression = "COALESCE(" + ",".join(date_columns) + ",'')"
-        rows = connection.execute(f"SELECT id FROM events WHERE {expression} <> '' AND {expression} < ?", (cutoff,)).fetchall()
-        targets = [str(row[0]) for row in rows if str(row[0]) not in protected]
-        removed = len(targets)
-        if targets and not dry_run:
-            connection.executemany("DELETE FROM events WHERE id=?", ((value,) for value in targets))
-    return removed
-
-
-def _planning_cleanup(root: Path, now: datetime, protected: set[str], dry_run: bool) -> int:
-    path = root / "data" / "newsdesk.db"
-    if not path.exists():
-        return 0
-    removed = 0
-    cutoff = now - timedelta(days=365)
-    with sqlite3.connect(path) as connection:
-        if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='planning'").fetchone():
-            return 0
-        rows = connection.execute("SELECT reference,decision_date,status,decision FROM planning WHERE COALESCE(decision_date,'')<>''").fetchall()
-        targets = []
-        for reference, decision_date, status, decision in rows:
-            stamp = _parse(decision_date)
-            concluded = bool(str(decision or "").strip()) or any(word in str(status or "").casefold() for word in ("decided", "approved", "refused", "withdrawn", "closed"))
-            if concluded and stamp and stamp < cutoff and str(reference).casefold() not in protected:
-                targets.append(str(reference))
-        removed = len(targets)
-        if targets and not dry_run:
-            connection.executemany("DELETE FROM planning WHERE reference=?", ((value,) for value in targets))
-    return removed
 
 
 def _file_cleanup(directory: Path, days: int, now: datetime, dry_run: bool, protected: set[str] | None = None) -> int:
@@ -225,15 +147,11 @@ def apply_retention(project_root: Path | None = None, *, dry_run: bool = False, 
     """Apply the published schedule and append a non-content audit record."""
     root = Path(project_root or PROJECT_ROOT)
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    content_ids, event_ids, planning_refs = _newsletter_protection(root)
     result: dict[str, Any] = {
         "timestamp": current.isoformat(), "policy_version": POLICY_VERSION, "dry_run": dry_run,
-        "protected_content_items": len(content_ids), "protected_event_items": len(event_ids),
     }
     try:
-        result.update(_content_cleanup(root, current, content_ids, dry_run))
-        result["expired_events_removed"] = _event_cleanup(root, current, event_ids, dry_run)
-        result["concluded_planning_removed"] = _planning_cleanup(root, current, planning_refs, dry_run)
+        result.update(_content_cleanup(root, current, dry_run))
         result["old_logs_removed"] = _file_cleanup(root / "logs", 30, current, dry_run)
         result["old_cached_images_removed"] = _file_cleanup(
             root / "cache" / "images", 14, current, dry_run,
