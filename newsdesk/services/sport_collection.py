@@ -28,7 +28,7 @@ from newsdesk.sports.rss.bbc_rugby_union import BBCRugbyUnionScraper
 from newsdesk.sports.sport_scraper import SportScraper
 from newsdesk.sports.websites import default_website_scrapers
 from newsdesk.story import Story
-from newsdesk.updates.content_gate import has_verified_full_content
+from newsdesk.social.content_gate import has_verified_full_content
 
 
 SportScraperFactory = Callable[[], Any]
