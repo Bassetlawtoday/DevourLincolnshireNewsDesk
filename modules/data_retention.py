@@ -67,7 +67,7 @@ class DataRetentionWindow(ctk.CTkToplevel):
         value = lambda key: int(audit.get(key, 0) or 0)
         details = (
             f"LDRS — emails removed: {value('emails_removed')}  •  articles minimised: {value('full_articles_minimised')}  •  metadata removed: {value('metadata_removed')}\n"
-            f"Records — expired events removed: {value('expired_events_removed')}  •  planning records removed: {value('concluded_planning_removed')}\n"
+            f"Active feeds — stories removed: {value('feed_snapshot_stories_removed')}  •  LDRS records removed: {value('metadata_removed')}\n"
             f"Files — logs removed: {value('old_logs_removed')}  •  cached images removed: {value('old_cached_images_removed')}"
         )
         self.status.configure(
