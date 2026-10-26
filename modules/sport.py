@@ -2086,18 +2086,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         if self.selected_story is None:
             return
 
-        if action_name == "ADD TO NEWSLETTER":
-            open_newsletter_action(
-                self, self.selected_story, module_key="sport",
-                newsletter_copy=str(
-                    getattr(self.selected_result, "website", "") or ""
-                ).strip(),
-                on_changed=lambda: configure_newsletter_action(
-                    self.action_bar, self.selected_story,
-                ),
-            )
-            return
-
         if action_name == "ADD TO SOCIALS":
             draft = add_story_to_social_desk(
                 self, self.selected_story, module_key="sport",
