@@ -24,8 +24,6 @@ RETENTION_SCHEDULE = (
     ("Social Desk local copies", "7 days; remote Metricool/social posts are unaffected"),
     ("Temporary source-image cache", "14 days"),
     ("Application logs", "30 days"),
-    ("Abandoned newsletter drafts", "Review after 90 days; no automatic editorial deletion"),
-    ("Published/selected newsletter copy, provenance and approved images", "Permanent editorial archive"),
 )
 
 
