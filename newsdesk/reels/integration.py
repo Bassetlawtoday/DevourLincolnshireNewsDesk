@@ -16,7 +16,7 @@ def install_selection(namespace):
         draft=original(parent,story,**kwargs)
         if draft is None: return draft
         try:
-            from newsdesk.updates.content_gate import has_verified_full_content
+            from newsdesk.social.content_gate import has_verified_full_content
             verified=has_verified_full_content(kwargs.get('module_key',''),story)
         except ImportError: verified=False
         key=identity(str(story.url or ''),draft.draft_id); store=Store(); old=store.get(key)
