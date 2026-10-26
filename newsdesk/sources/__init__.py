@@ -18,7 +18,6 @@ if TYPE_CHECKING:
         ScraperParseError,
         ScraperRequestError,
     )
-    from newsdesk.sources.fire_scraper import FireScraper
     from newsdesk.sources.police_scraper import PoliceScraper
     from newsdesk.sources.source_collector import (
         SourceCollectionError,
@@ -31,7 +30,6 @@ __all__ = [
     "ArticleLink",
     "ArticleScraper",
     "BaseScraper",
-    "FireScraper",
     "PoliceScraper",
     "ScrapeReport",
     "ScrapeResponse",
@@ -82,11 +80,6 @@ def __getattr__(name: str) -> Any:
             "ScraperParseError": ScraperParseError,
             "ScraperRequestError": ScraperRequestError,
         }[name]
-
-    if name == "FireScraper":
-        from newsdesk.sources.fire_scraper import FireScraper
-
-        return FireScraper
 
     if name == "PoliceScraper":
         from newsdesk.sources.police_scraper import PoliceScraper
