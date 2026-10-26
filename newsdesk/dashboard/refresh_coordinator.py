@@ -101,7 +101,7 @@ class DashboardRefreshCoordinator:
         from newsdesk.social.selection import _story_identity, stage_story_for_social_desk
         from newsdesk.social.store import SocialDraftStore, SocialHandoffStore
         from newsdesk.social.text import clean_social_text
-        from newsdesk.updates.content_gate import has_verified_full_content
+        from newsdesk.social.content_gate import has_verified_full_content
 
         stories = payload.get("stage_stories")
         if stories is None:
@@ -324,7 +324,7 @@ class DashboardRefreshCoordinator:
         from contentdesk.config import load_api_key, load_settings
         from contentdesk.storage import ContentStore
         from modules.content import SCOPE_LIMITS, _story_from_row, get_current_content_stories
-        from newsdesk.updates.content_gate import has_verified_full_content
+        from newsdesk.social.content_gate import has_verified_full_content
         from newsdesk.social.selection import _story_identity
         from newsdesk.social.store import SocialHandoffStore
 
