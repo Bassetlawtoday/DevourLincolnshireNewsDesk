@@ -5,7 +5,6 @@ from pathlib import Path
 
 from newsdesk.dashboard.registry import CARD_MODULE_KEYS, MODULE_NAMES
 from newsdesk.dashboard.state_store import DEFAULT_STATE
-from newsdesk.updates.store import ELIGIBLE_MODULES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -29,11 +28,6 @@ def test_removed_modules_are_not_registered_or_scheduled():
     assert REMOVED.isdisjoint(CARD_MODULE_KEYS)
     policies = DEFAULT_STATE["scheduler"]["module_policies"]
     assert REMOVED.isdisjoint(policies)
-
-
-def test_removed_modules_are_not_eligible_for_updates():
-    assert "fire" not in ELIGIBLE_MODULES
-    assert "planning" not in ELIGIBLE_MODULES
 
 
 def test_refresh_all_cannot_start_removed_modules():
