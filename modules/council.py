@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from io import BytesIO
+import ctypes
+from ctypes import wintypes
+import hashlib
 import json
+import os
 from pathlib import Path
 from queue import Empty, Queue
+import shutil
+import subprocess
 import threading
 import webbrowser
 import zipfile
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+from PIL import Image
 
 from newsdesk.action_bar import NewsDeskActionBar
 from newsdesk.display_dates import format_uk_date
@@ -38,7 +46,6 @@ from newsdesk.ui_support import (
     focus_existing_window,
     maximize_window,
 )
-from modules.fire import FireIntelligenceWindow as _EstablishedEditorialWorkspace
 
 
 ALL_SOURCES = "All Sources"
@@ -506,17 +513,338 @@ class CouncilIntelligenceWindow(ctk.CTkToplevel):
         if canvas is not None:
             canvas.yview_moveto(0)
 
-    # Reuse the established Fire/Police image-management implementations.
-    _selected_image_path = _EstablishedEditorialWorkspace._selected_image_path
-    _selected_image_credit = _EstablishedEditorialWorkspace._selected_image_credit
-    _copy_selected_image = _EstablishedEditorialWorkspace._copy_selected_image
-    _copy_selected_image_credit = _EstablishedEditorialWorkspace._copy_selected_image_credit
-    _save_selected_image = _EstablishedEditorialWorkspace._save_selected_image
-    _open_selected_image = _EstablishedEditorialWorkspace._open_selected_image
-    _show_selected_image_folder = _EstablishedEditorialWorkspace._show_selected_image_folder
-    _safe_filename = staticmethod(_EstablishedEditorialWorkspace._safe_filename)
-    _image_quality_details = _EstablishedEditorialWorkspace._image_quality_details
-    _with_image_credit = _EstablishedEditorialWorkspace._with_image_credit
+    def _selected_image_path(self):
+        """Return the selected story image path when it exists."""
+        if self.selected_story is None:
+            return None
+        value = str(
+            getattr(self.selected_story, "image_local_path", "") or ""
+        ).strip()
+        if not value:
+            return None
+        path = Path(value)
+        return path if path.is_file() else None
+
+    def _selected_image_credit(self, story=None):
+        """Return the most specific available image credit."""
+        current_story = story or self.selected_story
+        if current_story is None:
+            return "Council source"
+        credit = str(
+            getattr(current_story, "image_credit", "") or ""
+        ).strip()
+        if credit:
+            return credit
+        source = str(getattr(current_story, "source", "") or "").strip()
+        return source or "Council source"
+
+    def _copy_selected_image(self):
+        """Copy the selected image itself to the Windows clipboard."""
+        image_path = self._selected_image_path()
+        if image_path is None:
+            messagebox.showwarning(
+                "Image unavailable",
+                "The selected story does not have a local image.",
+                parent=self,
+            )
+            return
+        try:
+            with Image.open(image_path) as source_image:
+                clipboard_image = source_image.convert("RGB")
+                output = BytesIO()
+                clipboard_image.save(output, format="BMP")
+                dib_data = output.getvalue()[14:]
+            CF_DIB = 8
+            GMEM_MOVEABLE = 0x0002
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            user32.OpenClipboard.argtypes = [wintypes.HWND]
+            user32.OpenClipboard.restype = wintypes.BOOL
+            user32.EmptyClipboard.argtypes = []
+            user32.EmptyClipboard.restype = wintypes.BOOL
+            user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+            user32.SetClipboardData.restype = wintypes.HANDLE
+            user32.CloseClipboard.argtypes = []
+            user32.CloseClipboard.restype = wintypes.BOOL
+            kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+            kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+            kernel32.GlobalUnlock.restype = wintypes.BOOL
+            kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+            kernel32.GlobalFree.restype = wintypes.HGLOBAL
+            if not user32.OpenClipboard(None):
+                raise ctypes.WinError(ctypes.get_last_error())
+            memory_handle = None
+            try:
+                if not user32.EmptyClipboard():
+                    raise ctypes.WinError(ctypes.get_last_error())
+                memory_handle = kernel32.GlobalAlloc(
+                    GMEM_MOVEABLE, len(dib_data)
+                )
+                if not memory_handle:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                memory_pointer = kernel32.GlobalLock(memory_handle)
+                if not memory_pointer:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                try:
+                    ctypes.memmove(memory_pointer, dib_data, len(dib_data))
+                finally:
+                    kernel32.GlobalUnlock(memory_handle)
+                clipboard_handle = user32.SetClipboardData(
+                    CF_DIB, memory_handle
+                )
+                if not clipboard_handle:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                memory_handle = None
+            finally:
+                user32.CloseClipboard()
+                if memory_handle:
+                    kernel32.GlobalFree(memory_handle)
+            self.status_label.configure(
+                text="Status: Image copied to clipboard."
+            )
+        except Exception as error:
+            messagebox.showerror(
+                "Copy image failed",
+                f"The image could not be copied.\n\n{error}",
+                parent=self,
+            )
+
+    def _copy_selected_image_credit(self):
+        """Copy a publication-ready image credit to the text clipboard."""
+        if self.selected_story is None:
+            return
+        credit_text = (
+            f"Image credit: {self._selected_image_credit(self.selected_story)}"
+        )
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(credit_text)
+            self.update_idletasks()
+            self.status_label.configure(
+                text=f"Status: Copied — {credit_text}"
+            )
+        except Exception as error:
+            messagebox.showerror(
+                "Copy credit failed",
+                f"The image credit could not be copied.\n\n{error}",
+                parent=self,
+            )
+
+    def _save_selected_image(self):
+        """Save a copy of the selected image to a chosen location."""
+        image_path = self._selected_image_path()
+        if image_path is None:
+            messagebox.showwarning(
+                "Image unavailable",
+                "The selected story does not have a local image.",
+                parent=self,
+            )
+            return
+        suffix = image_path.suffix or ".jpg"
+        title = self._safe_filename(
+            getattr(self.selected_story, "title", "Council-story-image")
+        )
+        destination = filedialog.asksaveasfilename(
+            parent=self,
+            title="Save story image as",
+            initialfile=f"{title}{suffix}",
+            defaultextension=suffix,
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.webp *.gif"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not destination:
+            return
+        try:
+            shutil.copy2(image_path, destination)
+            self.status_label.configure(
+                text=f"Status: Image saved to {destination}"
+            )
+        except OSError as error:
+            messagebox.showerror(
+                "Save image failed",
+                f"The image could not be saved.\n\n{error}",
+                parent=self,
+            )
+
+    def _open_selected_image(self):
+        """Open the selected image in the Windows default image viewer."""
+        image_path = self._selected_image_path()
+        if image_path is None:
+            messagebox.showwarning(
+                "Image unavailable",
+                "The selected story does not have a local image.",
+                parent=self,
+            )
+            return
+        try:
+            os.startfile(image_path)
+            self.status_label.configure(
+                text="Status: Image opened in the default viewer."
+            )
+        except OSError as error:
+            messagebox.showerror(
+                "Open image failed",
+                f"The image could not be opened.\n\n{error}",
+                parent=self,
+            )
+
+    def _show_selected_image_folder(self):
+        """Open File Explorer with the selected image highlighted."""
+        image_path = self._selected_image_path()
+        if image_path is None:
+            messagebox.showwarning(
+                "Image unavailable",
+                "The selected story does not have a local image.",
+                parent=self,
+            )
+            return
+        try:
+            subprocess.Popen(["explorer", "/select,", str(image_path)])
+            self.status_label.configure(
+                text="Status: Image shown in File Explorer."
+            )
+        except OSError as error:
+            messagebox.showerror(
+                "Open folder failed",
+                f"File Explorer could not be opened.\n\n{error}",
+                parent=self,
+            )
+
+    @staticmethod
+    def _safe_filename(value):
+        """Create a Windows-safe filename stem from a story title."""
+        cleaned = "".join(
+            character if character not in '<>:"/\\|?*' else "-"
+            for character in str(value or "")
+        )
+        cleaned = " ".join(cleaned.split()).strip(" .-")
+        return cleaned[:120] or "Council-story-image"
+
+    def _image_quality_details(self, story, image_path):
+        """Return lightweight quality and duplicate/cache information."""
+        width = height = file_size = 0
+        digest = ""
+        try:
+            file_size = image_path.stat().st_size
+            with Image.open(image_path) as source_image:
+                width, height = source_image.size
+            hasher = hashlib.sha256()
+            with image_path.open("rb") as image_file:
+                for chunk in iter(lambda: image_file.read(131072), b""):
+                    hasher.update(chunk)
+            digest = hasher.hexdigest()
+        except (OSError, ValueError):
+            pass
+        megapixels = (width * height) / 1_000_000 if width and height else 0.0
+        aspect_ratio = width / height if height else 0.0
+        score = 0
+        reasons = []
+        if width >= 1600:
+            score += 40
+            reasons.append("high resolution")
+        elif width >= 1200:
+            score += 32
+            reasons.append("good resolution")
+        elif width >= 800:
+            score += 24
+            reasons.append("web resolution")
+        elif width:
+            score += 10
+            reasons.append("small image")
+        if height >= 600:
+            score += 25
+        elif height >= 400:
+            score += 18
+        elif height:
+            score += 8
+        if 1.35 <= aspect_ratio <= 2.1:
+            score += 20
+            reasons.append("strong editorial aspect")
+        elif aspect_ratio:
+            score += 10
+        if file_size >= 150_000:
+            score += 15
+        elif file_size >= 50_000:
+            score += 10
+        elif file_size:
+            score += 5
+        score = min(100, score)
+        rating = (
+            "Excellent" if score >= 80 else
+            "Good" if score >= 65 else
+            "Usable" if score >= 45 else
+            "Low"
+        )
+        duplicate_count = 0
+        if digest:
+            for candidate in self.stories:
+                candidate_path = str(
+                    getattr(candidate, "image_local_path", "") or ""
+                ).strip()
+                if not candidate_path:
+                    continue
+                candidate_file = Path(candidate_path)
+                if not candidate_file.is_file():
+                    continue
+                try:
+                    candidate_hasher = hashlib.sha256()
+                    with candidate_file.open("rb") as candidate_stream:
+                        for chunk in iter(
+                            lambda: candidate_stream.read(131072), b""
+                        ):
+                            candidate_hasher.update(chunk)
+                    if candidate_hasher.hexdigest() == digest:
+                        duplicate_count += 1
+                except OSError:
+                    continue
+        cache_label = (
+            "cache reused"
+            if bool(getattr(story, "image_cached", False))
+            else "new download"
+        )
+        duplicate_label = (
+            f" • used by {duplicate_count} stories"
+            if duplicate_count > 1 else ""
+        )
+        display = (
+            f"Image quality: {rating} ({score}/100) • "
+            f"{width}×{height}px • {megapixels:.2f}MP • "
+            f"{file_size / 1024:.0f}KB • {cache_label}{duplicate_label}"
+        )
+        return {
+            "score": score,
+            "rating": rating,
+            "width": width,
+            "height": height,
+            "megapixels": round(megapixels, 2),
+            "aspect_ratio": round(aspect_ratio, 3),
+            "file_size_bytes": file_size,
+            "sha256": digest,
+            "duplicate_story_count": duplicate_count,
+            "cache_reused": bool(getattr(story, "image_cached", False)),
+            "reasons": reasons,
+            "display": display,
+        }
+
+    def _with_image_credit(self, output, *, channel):
+        """Append a publication-ready image credit once."""
+        text = str(output or "").strip()
+        if not text or self.selected_story is None:
+            return text
+        credit = self._selected_image_credit(self.selected_story)
+        credit_line = (
+            f"📷 Image: {credit}"
+            if channel in {"facebook", "newsletter"}
+            else f"Image credit: {credit}"
+        )
+        if credit.casefold() in text.casefold():
+            return text
+        return f"{text}\n\n{credit_line}".strip()
 
     def _selected_publication_outputs(self):
         outputs = {"website": "", "facebook": "", "newsletter": ""}
