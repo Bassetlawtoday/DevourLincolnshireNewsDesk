@@ -1,7 +1,6 @@
 """NewsDesk Pro Home dashboard services."""
 
 from .models import DashboardRefreshResult, GovernmentAnnouncement
-from .planning_cache import PlanningResultCache
 from .registry import DashboardModuleDefinition, MODULE_REGISTRY
 from .refresh_coordinator import DashboardRefreshCoordinator
 from .result_repository import DashboardResultRepository
@@ -17,5 +16,4 @@ __all__ = [
     "DashboardStateStore",
     "GovernmentAnnouncement",
     "MODULE_REGISTRY",
-    "PlanningResultCache",
 ]
