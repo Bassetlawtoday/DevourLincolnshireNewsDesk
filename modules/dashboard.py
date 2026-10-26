@@ -17,7 +17,6 @@ from PIL import Image
 from newsdesk.display_dates import format_uk_datetime
 from newsdesk.theme import ACTION_BLUE, ACTION_BLUE_HOVER, LOGO_PATH
 
-from modules.system_health import open_system_health
 from modules.data_retention import open_data_retention
 from modules.social_desk import open_social_desk
 from modules.council import open_council
@@ -162,11 +161,6 @@ class Dashboard(ctk.CTkFrame):
             row, text="SOCIAL DESK", width=112,
             fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
             command=self._open_social_desk,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            row, text="SYSTEM HEALTH", width=135,
-            fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
-            command=self._open_system_health,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             row, text="DATA RETENTION", width=135,
@@ -613,22 +607,6 @@ class Dashboard(ctk.CTkFrame):
         module_state["last_window_open_seconds"] = round(float(duration), 3)
         module_state["last_window_open_at"] = datetime.now().astimezone().isoformat()
         self.state_store.save(state)
-
-    def _open_system_health(self):
-        """Open local operational health without starting collection."""
-
-        from newsdesk.health.service import SystemHealthService
-        service = SystemHealthService(
-            dashboard_state=self.state_store,
-            repository=self.result_repository,
-            coordinator=self.coordinator,
-            runtime=self,
-        )
-        window = open_system_health(
-            self.master, service=service,
-        )
-        if self.module_windows.get("system_health") is not window:
-            track_window_reference(self.module_windows, "system_health", window)
 
     def _open_data_retention(self):
         """Open the policy, schedule and auditable manual cleanup controls."""
