@@ -4,7 +4,6 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from modules.dashboard import Dashboard
-from database.database import create_database
 from newsdesk.ui_support import maximize_window
 from newsdesk.maintenance import run_startup_maintenance
 
@@ -34,8 +33,6 @@ def configure_logging():
 def main():
     configure_logging()
     run_startup_maintenance()
-    create_database()
-
     root = ctk.CTk()
 
     root.geometry("1400x900")
