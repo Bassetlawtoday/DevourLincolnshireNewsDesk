@@ -304,11 +304,32 @@ class ContentExplorerCollector:
     def __exit__(self, *_args):
         self.close()
 
+    @staticmethod
+    def _is_authenticated(driver: WebDriver) -> bool:
+        """Return whether the current browser page has an active LDRS session."""
+        try:
+            return any(
+                "log out" in str(element.text or "").casefold()
+                for element in driver.find_elements(By.TAG_NAME, "button")
+            )
+        except (NoSuchWindowException, WebDriverException):
+            return False
+
     def login(self) -> None:
         if not self.api_key:
             raise ContentExplorerError("Add the LDRS API key in API SETTINGS before updating content.")
         driver = self._driver_instance()
+
+        # Listing collection and detail collection share one browser. Reuse its
+        # authenticated session instead of treating the missing login input on
+        # an already signed-in page as an invalid API key.
+        if self._is_authenticated(driver):
+            return
+
         driver.get(self.base_url + "/")
+        if self._is_authenticated(driver):
+            return
+
         wait = WebDriverWait(driver, self.timeout)
         try:
             input_box = wait.until(
@@ -321,7 +342,7 @@ class ContentExplorerCollector:
                 buttons[0].click()
             else:
                 input_box.send_keys(Keys.ENTER)
-            wait.until(lambda d: any("log out" in element.text.casefold() for element in d.find_elements(By.TAG_NAME, "button")))
+            wait.until(self._is_authenticated)
         except TimeoutException as exc:
             message = "Content Explorer rejected the API key or did not complete sign-in."
             raise ContentExplorerError(message) from exc
