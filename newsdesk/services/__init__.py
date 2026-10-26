@@ -9,10 +9,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from newsdesk.services.fire_service import (
-        FireCollectionResult,
-        FireCollectionService,
-    )
     from newsdesk.services.image_service import ImageAsset, ImageService
     from newsdesk.services.police_collection import (
         PoliceCollectionResult,
@@ -20,8 +16,6 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "FireCollectionResult",
-    "FireCollectionService",
     "ImageAsset",
     "ImageService",
     "PoliceCollectionResult",
@@ -31,18 +25,6 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     """Resolve public service classes only when they are requested."""
-
-    if name in {"FireCollectionResult", "FireCollectionService"}:
-        from newsdesk.services.fire_service import (
-            FireCollectionResult,
-            FireCollectionService,
-        )
-
-        exports = {
-            "FireCollectionResult": FireCollectionResult,
-            "FireCollectionService": FireCollectionService,
-        }
-        return exports[name]
 
     if name in {"ImageAsset", "ImageService"}:
         from newsdesk.services.image_service import ImageAsset, ImageService
