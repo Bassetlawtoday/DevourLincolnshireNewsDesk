@@ -67,15 +67,8 @@ class DashboardScheduler:
         if mode in {"Off", "Manual only"}:
             return False
         if last_successful is None:
-            if module_key == "planning" and mode == "Daily":
-                due = cls._daily_candidate(now, policy.get("daily_time", "06:15"), day_offset=0)
-                return now >= due
             return True
         local_success = last_successful.astimezone(now.tzinfo)
-        if module_key == "planning" and mode == "Daily":
-            return local_success.date() != now.date() and now >= cls._daily_candidate(
-                now, policy.get("daily_time", "06:15"), day_offset=0
-            )
         interval = INTERVALS.get(mode)
         return bool(interval and now - local_success >= interval)
 
@@ -91,12 +84,6 @@ class DashboardScheduler:
         mode = policy.get("mode", "Manual only")
         if mode in {"Off", "Manual only"}:
             return False
-        if module_key == "planning":
-            if last_successful and last_successful.astimezone(now.tzinfo).date() == now.date():
-                return False
-            return cls.module_is_stale(
-                module_key, now, last_successful, policy
-            )
         if not has_current_payload:
             return True
         return cls.module_is_stale(module_key, now, last_successful, policy)
@@ -112,11 +99,6 @@ class DashboardScheduler:
         mode = policy.get("mode", "Manual only")
         if mode in {"Off", "Manual only"}:
             return None
-        if module_key == "planning" and mode == "Daily":
-            today = cls._daily_candidate(now, policy.get("daily_time", "06:15"), 0)
-            if last_successful and last_successful.astimezone(now.tzinfo).date() == now.date():
-                return cls._daily_candidate(now, policy.get("daily_time", "06:15"), 1)
-            return today if today > now else now
         interval = INTERVALS.get(mode)
         if interval is None:
             return None
@@ -137,13 +119,3 @@ class DashboardScheduler:
             for key, policy in module_policies.items()
         }
 
-    @staticmethod
-    def _daily_candidate(now: datetime, value: str, day_offset: int) -> datetime:
-        if not DashboardScheduler.validate_fixed_time(value):
-            value = "06:15"
-        hour, minute = (int(part) for part in value.split(":"))
-        day = now.date() + timedelta(days=day_offset)
-        return now.replace(
-            year=day.year, month=day.month, day=day.day,
-            hour=hour, minute=minute, second=0, microsecond=0,
-        )
