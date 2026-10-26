@@ -34,8 +34,7 @@ NETWORKS = (
 )
 IMAGE_LIBRARY = Path(r"C:\Users\Windows\Desktop\Devour News Lincs Images")
 SOURCE_LABELS = {
-    "bbc": "BBC VIDEO", "content": "LDRS", "events": "EVENTS",
-    "planning": "PLANNING", "police": "POLICE", "fire": "FIRE",
+    "bbc": "BBC VIDEO", "content": "LDRS", "police": "POLICE",
     "sport": "SPORT", "council": "COUNCIL", "blank": "BLANK",
 }
 
@@ -110,7 +109,7 @@ class SocialDesk(ctk.CTkToplevel):
         search.bind("<KeyRelease>", lambda _event: self._refresh_list())
         ctk.CTkOptionMenu(
             list_controls,
-            values=["BBC VIDEO", "ALL", "LDRS", "EVENTS", "PLANNING", "POLICE", "FIRE", "SPORT", "COUNCIL", "BLANK"],
+            values=["BBC VIDEO", "ALL", "LDRS", "POLICE", "SPORT", "COUNCIL", "BLANK"],
             variable=self.draft_filter_var,
             command=lambda _value: self._refresh_list(),
             width=145,
