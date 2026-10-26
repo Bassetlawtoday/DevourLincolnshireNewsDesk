@@ -13,28 +13,15 @@ from newsdesk.geography import story_matches_lincolnshire
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SUPPORTED_MODULES = ("sport", "police", "fire", "council")
+SUPPORTED_MODULES = ("sport", "police", "council")
 MODULE_LABELS = {
     "sport": "Sport",
     "police": "Police",
-    "fire": "Fire",
     "council": "Council",
-    "planning": "Planning",
 }
-RECENCY_DAYS = {"sport": 3, "police": 14, "fire": 14, "council": 14}
+RECENCY_DAYS = {"sport": 3, "police": 14, "council": 14}
 
 SPECIALIST_SOURCES = {
-    "planning": (
-        {
-            "source_id": "bassetlaw_planning_portal",
-            "name": "Bassetlaw Planning Portal",
-            "organisation": "Bassetlaw District Council",
-            "listing_url": "https://publicaccess.bassetlaw.gov.uk/",
-            "sport": "Planning applications",
-            "location": "Bassetlaw",
-            "enabled": True,
-        },
-    ),
     "police": (
         {
             "source_id": "lincolnshire_police_news",
