@@ -737,8 +737,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
         )
 
         if notify_dashboard:
-            from newsdesk.updates.store import UpdatesStore
-            UpdatesStore().ingest("sport", self.stories)
             self._window_support.notify_story_refresh(
                 self.stories, self.publish_results, errors
             )
@@ -1083,16 +1081,6 @@ class SportIntelligenceWindow(ctk.CTkToplevel):
 
                 if result.successful:
                     self.publish_results[id(story)] = result.publish_result
-
-                # Keep the central Updates Desk snapshot aligned with the
-                # richer story selected in Sport Intelligence.
-                try:
-                    from newsdesk.updates.store import UpdatesStore
-                    UpdatesStore().ingest("sport", [story])
-                except Exception:
-                    LOGGER.exception(
-                        "Could not synchronise enriched Sport story to Updates Desk"
-                    )
 
         except Exception as error:
             LOGGER.exception("Article enrichment failed: %s", error)
