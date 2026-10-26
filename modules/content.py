@@ -395,8 +395,6 @@ class ContentIntelligenceWindow(ctk.CTkToplevel):
                 if kind=="progress": self.status.configure(text=item[1])
                 elif kind=="done":
                     self._working=False; self.header.set_primary_button_text("UPDATE CONTENT"); self.header.set_primary_button_state("normal"); self.refresh_database()
-                    from newsdesk.updates.store import UpdatesStore
-                    UpdatesStore().ingest("content", (_story_from_row(row) for row in self.rows))
                     self.status.configure(text=f"UPDATE PASSED • {item[1]:,} Lincolnshire stories discovered • {item[2]:,} stored")
                 elif kind=="detail": self._working=False; self.refresh_database(); row=self.store.get(item[1]); self.select(row); self.status.configure(text="Full LDRS story and media downloaded")
                 elif kind=="detail_social":
