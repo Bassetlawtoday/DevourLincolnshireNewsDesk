@@ -11,7 +11,6 @@ class DashboardModuleDefinition:
     display_name: str
     workload: str
     show_card: bool = True
-    planning_special: bool = False
     supports_repository_payload: bool = True
     collector_key: str = ""
     open_handler: str = ""
