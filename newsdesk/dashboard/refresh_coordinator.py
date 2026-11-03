@@ -90,6 +90,12 @@ class DashboardRefreshCoordinator:
                     LOGGER.exception(
                         "Could not stage %s refresh in Social Desk", module_key
                     )
+            if module_key in {"police", "council", "sport", "content"}:
+                try:
+                    from newsdesk.app_publishing.intake import stage_app_payload
+                    stage_app_payload(payload, module_key=module_key)
+                except Exception:
+                    LOGGER.exception("Could not stage %s refresh in App Publishing", module_key)
             self.result_repository.set_result(
                 module_key, payload, result.completed_at
             )
