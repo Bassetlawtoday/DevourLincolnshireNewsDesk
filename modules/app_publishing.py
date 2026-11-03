@@ -9,6 +9,7 @@ from tkinter import messagebox
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
+import time
 from threading import Thread
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -35,6 +36,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.current_id = None
         self._loaded_snapshot = None
         self._preview_token = 0
+        self._preview_started = 0.0
+        self._preview_local_path = ''
         self._preview_image = None
         self._preview_results = queue.Queue()
         self.search_var = ctk.StringVar()
@@ -181,6 +184,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 token, result, error = self._preview_results.get_nowait()
                 if token != self._preview_token:
                     continue
+                self._preview_started = 0.0
                 if error:
                     self.image_preview.configure(image=None, text="Preview unavailable: " + error[:110])
                 else:
@@ -188,6 +192,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     self.image_preview.configure(image=self._preview_image, text="")
         except queue.Empty:
             pass
+        if self._preview_started and time.monotonic() - self._preview_started > 10:
+            self._preview_started = 0.0
+            self._preview_token += 1
+            self.image_preview.configure(image=None, text='Preview timed out. Try Refresh Image Preview.')
         if self.winfo_exists():
             self.after(150, self._poll_preview)
 
@@ -196,12 +204,25 @@ class AppPublishingWindow(ctk.CTkToplevel):
         token = self._preview_token
         self._preview_image = None
         self.image_preview.configure(image=None, text="Loading image preview...")
+        self._preview_started = time.monotonic()
         url = self.image_entry.get().strip()
         parsed = urlparse(url)
         if "placeholder" in parsed.path.casefold():
+            self._preview_started = 0.0
             self.image_preview.configure(text="Source supplied a placeholder, not a story photograph")
             return
+        local_path = Path(self._preview_local_path) if self._preview_local_path else None
+        if local_path and local_path.is_file():
+            try:
+                with Image.open(local_path) as local_image:
+                    local_image.thumbnail((500, 250))
+                    result = local_image.copy()
+                self._preview_results.put((token, result, None))
+                return
+            except (OSError, ValueError):
+                pass
         if parsed.scheme != "https" or not parsed.netloc:
+            self._preview_started = 0.0
             self.image_preview.configure(text="No HTTPS image URL available")
             return
 
@@ -248,6 +269,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.source_url = article.source_url
         self.source_link.configure(state="normal" if urlparse(self.source_url).scheme in {"http", "https"} else "disabled")
         self._set_entry(self.image_entry, article.image_url)
+        self._preview_local_path = article.image_local_path or ""
         self._set_entry(self.caption_entry, article.image_caption)
         self._set_entry(self.credit_entry, article.image_credit)
         self.areas_var.set(", ".join(article.areas))
