@@ -10,7 +10,7 @@ from newsdesk.app_publishing.store import AppArticleStore
 from newsdesk.social.content_gate import has_verified_full_content
 
 
-SUPPORTED_MODULES = frozenset({"police", "fire", "council", "sport", "content"})
+SUPPORTED_MODULES = frozenset({"police", "council", "sport", "content"})
 
 
 def story_identity(story, module_key: str) -> str:
