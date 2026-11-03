@@ -8,6 +8,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 from newsdesk.app_publishing.store import AppArticleStore
+from newsdesk.app_publishing.areas import available_areas
 
 BG = "#0f172a"
 PANEL = "#1f2937"
@@ -67,6 +68,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.credit_entry = self._entry(form, "Image credit")
         ctk.CTkLabel(form, text="County: Lincolnshire", text_color=TEXT).pack(anchor="w", pady=(10, 0))
         ctk.CTkLabel(form, text="Areas (comma-separated; leave blank for all Lincolnshire)", text_color=TEXT).pack(anchor="w")
+        self.areas_menu = ctk.CTkComboBox(form, values=["All Lincolnshire", *available_areas()], state="readonly", command=self._add_area)
+        self.areas_menu.pack(fill="x", pady=(3, 5))
+        self.areas_menu.set("All Lincolnshire")
+        ctk.CTkLabel(form, text="Selected areas (comma-separated; blank means all Lincolnshire)", text_color=MUTED).pack(anchor="w")
         ctk.CTkEntry(form, textvariable=self.areas_var).pack(fill="x", pady=(3, 5))
         ctk.CTkLabel(form, text="Category", text_color=TEXT).pack(anchor="w")
         ctk.CTkEntry(form, textvariable=self.category_var).pack(fill="x", pady=(3, 5))
@@ -103,6 +108,15 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 anchor="w", fg_color="#334155", height=44,
                 command=lambda item=article: self._open_article(item),
             ).pack(fill="x", pady=3)
+
+    def _add_area(self, value):
+        if value == "All Lincolnshire":
+            self.areas_var.set("")
+        else:
+            selected = [x.strip() for x in self.areas_var.get().split(",") if x.strip()]
+            if value not in selected:
+                selected.append(value)
+            self.areas_var.set(", ".join(selected))
 
     def _open_article(self, article):
         self.current_id = article.article_id
