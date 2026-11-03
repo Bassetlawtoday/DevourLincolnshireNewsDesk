@@ -12,6 +12,7 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import urlparse
 from urllib.request import urlopen
+import queue
 import webbrowser
 
 from newsdesk.app_publishing.store import AppArticleStore
@@ -35,12 +36,16 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._loaded_snapshot = None
         self._preview_token = 0
         self._preview_image = None
+        self._preview_results = queue.Queue()
         self.search_var = ctk.StringVar()
         self.areas_var = ctk.StringVar()
         self.category_var = ctk.StringVar()
         self.notify_var = ctk.BooleanVar(value=False)
+        self.notification_type_var = ctk.StringVar(value='Breaking news')
+        self.notification_message_var = ctk.StringVar()
         self._build()
         self._refresh()
+        self.after(150, self._poll_preview)
 
     def _build(self):
         ctk.CTkLabel(self, text="DEVOUR NEWS  |  APP PUBLISHING", font=("Arial", 24, "bold"), text_color=TEXT).pack(anchor="w", padx=22, pady=(20, 4))
@@ -92,6 +97,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
         ctk.CTkLabel(form, text="Category", text_color=TEXT).pack(anchor="w")
         ctk.CTkEntry(form, textvariable=self.category_var).pack(fill="x", pady=(3, 5))
         ctk.CTkCheckBox(form, text="Mark for reader notification (not sent until cloud integration)", variable=self.notify_var, text_color=TEXT, fg_color=BLUE, hover_color=BLUE, border_color=MUTED).pack(anchor="w", pady=8)
+        ctk.CTkLabel(form, text="Notification type (editorial choice; not sent)", text_color=TEXT).pack(anchor="w")
+        ctk.CTkOptionMenu(form, variable=self.notification_type_var, values=["Breaking news", "Local news", "Important update"]).pack(anchor="w", pady=(3, 8))
+        self.notification_message_entry = self._entry(form, "Notification message (optional)")
+        ctk.CTkButton(form, text="PREVIEW READER NOTIFICATION", command=self._preview_notification).pack(anchor="w", pady=(4, 10))
         controls = ctk.CTkFrame(right, fg_color="transparent")
         controls.pack(fill="x", padx=14, pady=12)
         ctk.CTkButton(controls, text="SAVE DRAFT", command=self._save, fg_color=BLUE).pack(side="left", padx=(0, 8))
@@ -144,6 +153,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
             tuple(x.strip() for x in self.areas_var.get().split(",") if x.strip()),
             self.category_var.get(),
             self.notify_var.get(),
+            self.notification_type_var.get(),
+            self.notification_message_entry.get(),
         )
 
     def _open_source(self):
@@ -153,6 +164,33 @@ class AppPublishingWindow(ctk.CTkToplevel):
             return
         webbrowser.open(self.source_url)
 
+    def _preview_notification(self):
+        title = self.title_entry.get().strip() or "Untitled article"
+        message = self.notification_message_entry.get().strip() or title
+        messagebox.showinfo(
+            "Reader notification preview",
+            f"Type: {self.notification_type_var.get()}\n\n"
+            f"Title: {title}\n\nMessage: {message}\n\n"
+            "Preview only. No notification has been sent.",
+            parent=self,
+        )
+
+    def _poll_preview(self):
+        try:
+            while True:
+                token, result, error = self._preview_results.get_nowait()
+                if token != self._preview_token:
+                    continue
+                if error:
+                    self.image_preview.configure(image=None, text="Preview unavailable: " + error[:110])
+                else:
+                    self._preview_image = ctk.CTkImage(light_image=result, dark_image=result, size=result.size)
+                    self.image_preview.configure(image=self._preview_image, text="")
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(150, self._poll_preview)
+
     def _load_preview(self):
         self._preview_token += 1
         token = self._preview_token
@@ -160,13 +198,16 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.image_preview.configure(image=None, text="Loading image preview...")
         url = self.image_entry.get().strip()
         parsed = urlparse(url)
+        if "placeholder" in parsed.path.casefold():
+            self.image_preview.configure(text="Source supplied a placeholder, not a story photograph")
+            return
         if parsed.scheme != "https" or not parsed.netloc:
             self.image_preview.configure(text="No HTTPS image URL available")
             return
 
         def fetch():
             try:
-                with urlopen(url, timeout=8) as response:
+                with urlopen(url, timeout=6) as response:
                     content_type = response.headers.get("Content-Type", "").lower()
                     if not content_type.startswith("image/"):
                         raise ValueError("The source did not return an image")
@@ -176,23 +217,9 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 image = Image.open(BytesIO(data))
                 image.thumbnail((500, 250))
                 image.load()
-                result = image.copy()
-                error = None
+                self._preview_results.put((token, image.copy(), None))
             except Exception as exc:
-                result, error = None, str(exc)
-
-            def display():
-                if token != self._preview_token or not self.winfo_exists():
-                    return
-                if error:
-                    self.image_preview.configure(image=None, text="Preview unavailable: " + error[:100])
-                    return
-                self._preview_image = ctk.CTkImage(light_image=result, dark_image=result, size=result.size)
-                self.image_preview.configure(image=self._preview_image, text="")
-            try:
-                self.after(0, display)
-            except RuntimeError:
-                pass
+                self._preview_results.put((token, None, str(exc)))
 
         Thread(target=fetch, daemon=True).start()
 
@@ -226,6 +253,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.areas_var.set(", ".join(article.areas))
         self.category_var.set(article.category)
         self.notify_var.set(article.notify_readers)
+        self.notification_type_var.set(article.notification_type)
+        self._set_entry(self.notification_message_entry, article.notification_message)
         self._count_words()
         self._loaded_snapshot = self._editor_values()
         self._load_preview()
@@ -257,6 +286,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         article.areas = list(dict.fromkeys(x.strip() for x in self.areas_var.get().split(",") if x.strip()))
         article.category = self.category_var.get().strip()
         article.notify_readers = self.notify_var.get()
+        article.notification_type = self.notification_type_var.get()
+        article.notification_message = self.notification_message_entry.get().strip()
         self.store.upsert(article)
         self.status_label.configure(text="Local draft saved. Not published.")
         self._loaded_snapshot = self._editor_values()
