@@ -19,6 +19,7 @@ from newsdesk.theme import ACTION_BLUE, ACTION_BLUE_HOVER, LOGO_PATH
 
 from modules.data_retention import open_data_retention
 from modules.social_desk import open_social_desk
+from modules.app_publishing import open_app_publishing
 from modules.council import open_council
 from modules.content import open_content, get_content_dashboard_summary
 from modules.police import open_police
@@ -163,6 +164,11 @@ class Dashboard(ctk.CTkFrame):
             command=self._open_social_desk,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
+            row, text="APP PUBLISHING", width=135,
+            fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
+            command=self._open_app_publishing,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
             row, text="DATA RETENTION", width=135,
             fg_color=ACTION_BLUE, hover_color=ACTION_BLUE_HOVER,
             command=self._open_data_retention,
@@ -240,6 +246,14 @@ class Dashboard(ctk.CTkFrame):
             return existing
         module = open_content(self.master)
         track_window_reference(self.module_windows, "content", module)
+        return module
+
+    def _open_app_publishing(self):
+        existing = self.module_windows.get("app_publishing")
+        if focus_existing_window(existing):
+            return existing
+        module = open_app_publishing(self.master)
+        track_window_reference(self.module_windows, "app_publishing", module)
         return module
 
     def _open_social_desk(self):
