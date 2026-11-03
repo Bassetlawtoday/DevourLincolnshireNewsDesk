@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import hashlib
 from tkinter import messagebox
 
+from newsdesk.social.auto_metricool import queue_auto_metricool_handoff
 from newsdesk.social.store import SocialDraft, SocialDraftStore, SocialHandoffStore, SocialSettingsStore
 from newsdesk.social.text import clean_social_text, repair_ldrs_draft
 
@@ -147,12 +148,6 @@ def stage_story_for_social_desk(
     image_credit = (
         str(getattr(story, "image_credit", "") or "").strip() if image_url else ""
     )
-    # Unknown image ownership must not stop the story entering Social Desk.
-    # Stage the copy without that image; an editor may add an approved image.
-    if image_url and not image_credit:
-        image_url = ""
-        image_caption = ""
-
     settings = SocialSettingsStore().load()
     draft.title = title
     draft.text = text
@@ -190,6 +185,7 @@ def stage_story_for_social_desk(
     if not existed:
         drafts.append(draft)
     store.save(drafts)
+    queue_auto_metricool_handoff(draft.draft_id)
     SocialHandoffStore().mark(identity, module_key)
     return draft, not existed
 

@@ -337,19 +337,13 @@ def _regional_scrapers() -> tuple[tuple[RegionalPolicePublisherScraper, bool], .
             RegionalPolicePublisherScraper(
                 source_name="Humberside Police",
                 base_url="https://www.humberside.police.uk",
-                listing_url="https://www.humberside.police.uk/news/news-search/?ct=News&q=Scunthorpe",
+                # The complete official search includes News, Appeals,
+                # Missing and Wanted. Geographic filtering is applied after
+                # full article extraction so no Lincolnshire locality relies
+                # on a restrictive search word.
+                listing_url="https://www.humberside.police.uk/news/news-search/",
                 article_path_prefixes=("/news/humberside/news/",),
-                limit=40,
-            ),
-            True,
-        ),
-        (
-            RegionalPolicePublisherScraper(
-                source_name="Humberside Police",
-                base_url="https://www.humberside.police.uk",
-                listing_url="https://www.humberside.police.uk/news/news-search/?ct=News&q=Grimsby",
-                article_path_prefixes=("/news/humberside/news/",),
-                limit=40,
+                limit=80,
             ),
             True,
         ),

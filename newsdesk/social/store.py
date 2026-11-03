@@ -94,6 +94,8 @@ class SocialDraft:
     timezone: str = "Europe/London"
     status: str = "local draft"
     metricool_id: str = ""
+    metricool_auto_state: str = ""
+    metricool_auto_error: str = ""
     # Stable collector identity used to prevent repeat staging across refreshes.
     source_identity: str = ""
     # Retained for backwards compatibility with drafts created by Updates Desk.

@@ -28,6 +28,14 @@ LINCOLNSHIRE_PLACES = (
     "Washingborough", "Bardney", "Sutton Bridge", "Gedney", "Moulton",
     "Crowle", "Epworth", "Kirton in Lindsey", "Barrow upon Humber", "New Holland",
     "Peaks Lane", "Waltham", "Winterton", "Immingham East", "Immingham West",
+    "North Lincolnshire", "North East Lincolnshire", "Isle of Axholme",
+    "Barton", "Barton upon Humber", "Barton-upon-Humber", "Ashby", "Bottesford",
+    "Broughton", "Burton upon Stather", "Goxhill", "Haxey", "Keadby", "Messingham",
+    "Roxby", "Scawby", "South Killingholme", "Ulceby", "West Butterwick",
+    "Crosby", "Frodingham", "Thealby", "Flixborough", "Gunness", "Alkborough",
+    "Humberston", "Laceby", "Healing", "Keelby", "New Waltham", "Tetney",
+    "Great Coates", "Little Coates", "Nunsthorpe", "Freshney", "Haverstoe",
+    "Sidney Sussex", "East Marsh", "West Marsh",
 )
 
 
