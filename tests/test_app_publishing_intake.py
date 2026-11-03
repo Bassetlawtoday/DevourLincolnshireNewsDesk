@@ -66,3 +66,11 @@ def test_identity_ignores_source_headline_edits():
     assert story_identity(_story(), "council") == story_identity(
         _story(title="Corrected headline"), "council"
     )
+
+
+def test_fire_content_is_excluded(tmp_path):
+    store = AppArticleStore(tmp_path / "app.json")
+    article, created = stage_app_story(_story(), module_key="fire", store=store)
+    assert article is None
+    assert not created
+    assert store.load() == []
