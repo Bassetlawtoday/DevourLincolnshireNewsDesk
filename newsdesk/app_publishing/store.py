@@ -38,6 +38,8 @@ class AppArticle:
     areas: list[str] = field(default_factory=list)
     category: str = ""
     notify_readers: bool = False
+    notification_type: str = "Breaking news"
+    notification_message: str = ""
     status: str = "draft"
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
