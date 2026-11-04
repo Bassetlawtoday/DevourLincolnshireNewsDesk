@@ -115,6 +115,7 @@ class AppArticleStore:
             image_caption=str(getattr(story, "image_caption", "") or ""),
             image_credit=str(getattr(story, "image_credit", "") or ""),
             category=str(getattr(story, "category", "") or ""),
+            status="new",
         )
         articles.append(article)
         self.save(articles)
