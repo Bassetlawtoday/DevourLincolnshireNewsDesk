@@ -13,7 +13,7 @@ from pathlib import Path
 import time
 from threading import Thread
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 import queue
 import webbrowser
 import textwrap
@@ -130,6 +130,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         ctk.CTkButton(controls, text="PUBLISH (NOT CONNECTED)", state="disabled").pack(side="left", padx=(0, 8))
         ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", state="disabled").pack(side="left")
         ctk.CTkButton(controls, text="EXPORT READY PREVIEW", command=self._export_ready_preview).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(controls, text="TEST SUPABASE CONNECTION", command=self._test_supabase_connection).pack(side="left", padx=(0, 8))
         self.status_label = ctk.CTkLabel(right, text="Select an article to edit", text_color=MUTED)
         self.status_label.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -230,6 +231,13 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     token, result, error = self._preview_results.get_nowait()
                 except queue.Empty:
                     break
+                if token == "connection":
+                    self.status_label.configure(text=error)
+                    if result:
+                        messagebox.showinfo("Supabase connection", error, parent=self)
+                    else:
+                        messagebox.showerror("Supabase connection", error, parent=self)
+                    continue
                 if token != self._preview_token:
                     continue
                 self._preview_started = 0.0
@@ -462,6 +470,35 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._refresh()
         self.status_label.configure(text=f"Cleared {count} App Publishing articles. Backup: {backup}")
         messagebox.showinfo("App Publishing", f"Cleared {count} articles.\\nBackup: {backup}", parent=self)
+
+    def _test_supabase_connection(self):
+        """Check the public, read-only Edge Function without credentials or article data."""
+        endpoint = ("https://onmmfbyocbnwbqxmdthe.supabase.co"
+                    "/functions/v1/newsdesk-connection-test")
+        self.status_label.configure(text="Testing Supabase connection...")
+        def worker():
+            try:
+                request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
+                with urlopen(request, timeout=8) as response:
+                    if response.status != 200:
+                        raise ValueError(f"HTTP {response.status}")
+                    data = response.read(8193)
+                    if len(data) > 8192:
+                        raise ValueError("Response too large")
+                import json
+                payload = json.loads(data.decode("utf-8"))
+                if (payload.get("application") != "Devour News"
+                    or payload.get("status") != "connection_ok"
+                    or payload.get("database_access") is not False
+                    or payload.get("publishing_enabled") is not False):
+                    raise ValueError("Unexpected connection-test response")
+                result = "Supabase connection successful. No articles uploaded or published."
+                success = True
+            except Exception as exc:
+                result = "Supabase connection failed: " + str(exc)
+                success = False
+            self._preview_results.put(("connection", success, result))
+        Thread(target=worker, daemon=True).start()
 
     def _export_ready_preview(self):
         """Export a local test feed; never send content to a server."""
