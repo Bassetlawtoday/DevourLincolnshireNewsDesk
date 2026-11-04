@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 import queue
 import webbrowser
+import textwrap
 
 from newsdesk.app_publishing.store import AppArticleStore
 from newsdesk.app_publishing.areas import available_areas
@@ -43,6 +44,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._preview_results = queue.Queue()
         self._preview_status = 'Idle'
         self.search_var = ctk.StringVar()
+        self.review_filter_var = ctk.StringVar(value="All")
+        self.review_status = "new"
         self.areas_var = ctk.StringVar()
         self.category_var = ctk.StringVar()
         self.notify_var = ctk.BooleanVar(value=False)
@@ -64,6 +67,11 @@ class AppPublishingWindow(ctk.CTkToplevel):
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         ctk.CTkEntry(left, textvariable=self.search_var, placeholder_text="Search incoming articles").pack(fill="x", padx=10, pady=10)
         self.search_var.trace_add("write", lambda *_: self._refresh())
+        ctk.CTkOptionMenu(left, variable=self.review_filter_var,
+                          values=["All", "New", "Draft", "Ready"],
+                          command=lambda _value: self._refresh()).pack(fill="x", padx=10, pady=(0, 6))
+        self.review_counts_label = ctk.CTkLabel(left, text="", text_color=MUTED)
+        self.review_counts_label.pack(anchor="w", padx=10, pady=(0, 5))
         self.list_box = ctk.CTkScrollableFrame(left, fg_color=PANEL)
         self.list_box.pack(fill="both", expand=True, padx=8, pady=8)
         right = ctk.CTkFrame(layout, fg_color=PANEL)
@@ -111,6 +119,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         controls = ctk.CTkFrame(right, fg_color="transparent")
         controls.pack(fill="x", padx=14, pady=12)
         ctk.CTkButton(controls, text="SAVE DRAFT", command=self._save, fg_color=BLUE).pack(side="left", padx=(0, 8))
+        self.ready_button = ctk.CTkButton(controls, text="MARK AS READY", command=self._mark_ready)
+        self.ready_button.pack(side="left", padx=(0, 8))
         ctk.CTkButton(controls, text="PUBLISH (NOT CONNECTED)", state="disabled").pack(side="left", padx=(0, 8))
         ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", state="disabled").pack(side="left")
         self.status_label = ctk.CTkLabel(right, text="Select an article to edit", text_color=MUTED)
@@ -123,6 +133,11 @@ class AppPublishingWindow(ctk.CTkToplevel):
         entry.pack(fill="x")
         return entry
 
+    @staticmethod
+    def _review_state(article):
+        value = (article.status or "").strip().lower()
+        return value if value in {"new", "draft", "ready"} else "draft"
+
     def _refresh(self):
         for child in self.list_box.winfo_children():
             child.destroy()
@@ -131,13 +146,25 @@ class AppPublishingWindow(ctk.CTkToplevel):
         except (OSError, ValueError) as error:
             messagebox.showerror("App Publishing", str(error), parent=self)
             return
+        counts = {state: sum(self._review_state(item) == state for item in articles)
+                  for state in ("new", "draft", "ready")}
+        self.review_counts_label.configure(
+            text=f"New: {counts['new']}   Draft: {counts['draft']}   Ready: {counts['ready']}"
+        )
         query = self.search_var.get().strip().casefold()
+        selected = self.review_filter_var.get().casefold()
         for article in sorted(articles, key=lambda item: item.updated_at, reverse=True):
+            state = self._review_state(article)
+            if selected != "all" and selected != state:
+                continue
             if query and query not in (article.title + " " + article.body).casefold():
                 continue
+            headline = textwrap.shorten(article.title or "Untitled", width=95, placeholder="...")
+            wrapped = textwrap.fill(headline, width=40, max_lines=2, placeholder="...")
             ctk.CTkButton(
-                self.list_box, text=(article.title or "Untitled")[:70],
-                anchor="w", fg_color="#334155", height=44,
+                self.list_box, text=f"[{state.upper()}]  {wrapped}",
+                anchor="w", fg_color="#334155", height=62,
+                font=("Arial", 14),
                 command=lambda item=article: self._open_article(item),
             ).pack(fill="x", pady=3)
 
@@ -310,6 +337,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 if choice and not self._save():
                     return
         self.current_id = article.article_id
+        self.review_status = self._review_state(article)
+        self.ready_button.configure(text="RETURN TO DRAFT" if self.review_status == "ready" else "MARK AS READY")
         self._set_entry(self.title_entry, article.title)
         self.body_box.delete("1.0", "end")
         self.body_box.insert("1.0", article.body)
@@ -332,7 +361,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._count_words()
         self._loaded_snapshot = self._editor_values()
         self._load_preview()
-        self.status_label.configure(text=f"Editing local draft: {article.title}")
+        self.status_label.configure(text=f"Editing {self.review_status.upper()} article: {article.title}")
 
     @staticmethod
     def _set_entry(entry, value):
@@ -343,7 +372,19 @@ class AppPublishingWindow(ctk.CTkToplevel):
         words = len(self.body_box.get("1.0", "end-1c").split())
         self.counter.configure(text=f"{words} words (approximately 500 target)")
 
-    def _save(self):
+    def _mark_ready(self):
+        if not self.current_id:
+            messagebox.showinfo("App Publishing", "Select an article first.", parent=self)
+            return
+        if self.review_status == "ready":
+            self._save(status="draft")
+            return
+        if not self.title_entry.get().strip() or not self.body_box.get("1.0", "end-1c").strip():
+            messagebox.showwarning("App Publishing", "A headline and article body are required before marking ready.", parent=self)
+            return
+        self._save(status="ready")
+
+    def _save(self, status="draft"):
         if not self.current_id:
             messagebox.showinfo("App Publishing", "Select an article first.", parent=self)
             return False
@@ -352,6 +393,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         if article is None:
             messagebox.showerror("App Publishing", "The selected draft no longer exists.", parent=self)
             return False
+        article.status = status
         article.title = self.title_entry.get().strip()
         article.body = self.body_box.get("1.0", "end-1c").strip()
         article.image_url = self.image_entry.get().strip()
@@ -363,7 +405,9 @@ class AppPublishingWindow(ctk.CTkToplevel):
         article.notification_type = self.notification_type_var.get()
         article.notification_message = self.notification_message_entry.get().strip()
         self.store.upsert(article)
-        self.status_label.configure(text="Local draft saved. Not published.")
+        self.review_status = status
+        self.ready_button.configure(text="RETURN TO DRAFT" if status == "ready" else "MARK AS READY")
+        self.status_label.configure(text=("Marked READY for future publishing. Not published." if status == "ready" else "Local draft saved. Not published."))
         self._loaded_snapshot = self._editor_values()
         self._refresh()
         return True
