@@ -40,6 +40,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._preview_local_path = ''
         self._preview_image = None
         self._preview_results = queue.Queue()
+        self._preview_status = 'Idle'
         self.search_var = ctk.StringVar()
         self.areas_var = ctk.StringVar()
         self.category_var = ctk.StringVar()
@@ -87,6 +88,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.image_entry = self._entry(form, "Image URL")
         self.image_preview = ctk.CTkLabel(form, text="No image selected", text_color=TEXT, height=110)
         self.image_preview.pack(anchor="w", pady=(8, 3))
+        self.preview_status_label = ctk.CTkLabel(form, text="Image status: Not loaded", text_color=MUTED)
+        self.preview_status_label.pack(anchor="w")
         ctk.CTkButton(form, text="REFRESH IMAGE PREVIEW", width=190, command=self._load_preview).pack(anchor="w", pady=(0, 8))
         self.caption_entry = self._entry(form, "Image caption")
         self.credit_entry = self._entry(form, "Image credit")
@@ -178,7 +181,14 @@ class AppPublishingWindow(ctk.CTkToplevel):
             parent=self,
         )
 
+    def _set_preview_status(self, status, detail=""):
+        self._preview_status = status
+        self.preview_status_label.configure(
+            text="Image status: " + status + ((" - " + detail[:110]) if detail else "")
+        )
+
     def _poll_preview(self):
+        # The GUI thread alone owns all Tk/CustomTkinter widget updates.
         try:
             while True:
                 token, result, error = self._preview_results.get_nowait()
@@ -186,16 +196,25 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     continue
                 self._preview_started = 0.0
                 if error:
-                    self.image_preview.configure(image=None, text="Preview unavailable: " + error[:110])
+                    self.image_preview.configure(image=None, text="Image unavailable")
+                    self._set_preview_status("Download failed", error)
                 else:
-                    self._preview_image = ctk.CTkImage(light_image=result, dark_image=result, size=result.size)
-                    self.image_preview.configure(image=self._preview_image, text="")
+                    try:
+                        self._preview_image = ctk.CTkImage(
+                            light_image=result, dark_image=result, size=result.size
+                        )
+                        self.image_preview.configure(image=self._preview_image, text="")
+                        self._set_preview_status("Loaded")
+                    except Exception as exc:
+                        self.image_preview.configure(image=None, text="Image unavailable")
+                        self._set_preview_status("Display failed", str(exc))
         except queue.Empty:
             pass
         if self._preview_started and time.monotonic() - self._preview_started > 10:
             self._preview_started = 0.0
             self._preview_token += 1
-            self.image_preview.configure(image=None, text='Preview timed out. Try Refresh Image Preview.')
+            self.image_preview.configure(image=None, text="Image preview timed out")
+            self._set_preview_status("Timed out")
         if self.winfo_exists():
             self.after(150, self._poll_preview)
 
@@ -203,13 +222,15 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._preview_token += 1
         token = self._preview_token
         self._preview_image = None
-        self.image_preview.configure(image=None, text="Loading image preview...")
         self._preview_started = time.monotonic()
+        self.image_preview.configure(image=None, text="Loading image preview...")
+        self._set_preview_status("Loading")
         url = self.image_entry.get().strip()
         parsed = urlparse(url)
         if "placeholder" in parsed.path.casefold():
             self._preview_started = 0.0
-            self.image_preview.configure(text="Source supplied a placeholder, not a story photograph")
+            self.image_preview.configure(text="No story photograph supplied")
+            self._set_preview_status("Missing", "Source placeholder")
             return
         local_path = Path(self._preview_local_path) if self._preview_local_path else None
         if local_path and local_path.is_file():
@@ -223,7 +244,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 pass
         if parsed.scheme != "https" or not parsed.netloc:
             self._preview_started = 0.0
-            self.image_preview.configure(text="No HTTPS image URL available")
+            self.image_preview.configure(text="No valid HTTPS image URL")
+            self._set_preview_status("Missing", "No valid HTTPS image URL")
             return
 
         def fetch():
@@ -231,10 +253,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 with urlopen(url, timeout=6) as response:
                     content_type = response.headers.get("Content-Type", "").lower()
                     if not content_type.startswith("image/"):
-                        raise ValueError("The source did not return an image")
+                        raise ValueError("Source did not return an image")
                     data = response.read(5_000_001)
                     if len(data) > 5_000_000:
-                        raise ValueError("Image exceeds the 5 MB preview limit")
+                        raise ValueError("Image exceeds 5 MB limit")
                 image = Image.open(BytesIO(data))
                 image.thumbnail((500, 250))
                 image.load()
