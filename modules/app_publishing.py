@@ -384,7 +384,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
             return
         self._save(status="ready")
 
-    def _save(self, status="draft"):
+    def _save(self, status=None):
         if not self.current_id:
             messagebox.showinfo("App Publishing", "Select an article first.", parent=self)
             return False
@@ -393,6 +393,9 @@ class AppPublishingWindow(ctk.CTkToplevel):
         if article is None:
             messagebox.showerror("App Publishing", "The selected draft no longer exists.", parent=self)
             return False
+        status = status or self._review_state(article)
+        if status == "new":
+            status = "draft"
         article.status = status
         article.title = self.title_entry.get().strip()
         article.body = self.body_box.get("1.0", "end-1c").strip()
