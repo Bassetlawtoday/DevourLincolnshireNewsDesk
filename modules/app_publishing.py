@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 from tkinter import messagebox
-from PIL import Image
+from PIL import Image, ImageTk
 from io import BytesIO
 from pathlib import Path
 import time
@@ -203,11 +203,12 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     self._set_preview_status("Download failed", error)
                 else:
                     try:
-                        preview = ctk.CTkImage(
-                            light_image=result, dark_image=result, size=result.size
-                        )
-                        self.image_preview.configure(image=preview, text="")
+                        # Explicitly bind the Tk image to this label's interpreter.
+                        # CTkImage can otherwise create a PhotoImage on the default
+                        # root, which fails in a separate CTkToplevel window.
+                        preview = ImageTk.PhotoImage(result, master=self.image_preview)
                         self._preview_image = preview
+                        self.image_preview.configure(image=preview, text="")
                         self._set_preview_status("Loaded")
                     except Exception as exc:
                         self.image_preview.configure(image=None, text="Image unavailable")
