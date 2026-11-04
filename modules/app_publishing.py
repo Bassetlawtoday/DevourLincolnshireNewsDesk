@@ -17,6 +17,8 @@ from urllib.request import urlopen
 import queue
 import webbrowser
 import textwrap
+import shutil
+from datetime import datetime
 
 from newsdesk.app_publishing.store import AppArticleStore
 from newsdesk.app_publishing.areas import available_areas
@@ -72,6 +74,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
                           command=lambda _value: self._refresh()).pack(fill="x", padx=10, pady=(0, 6))
         self.review_counts_label = ctk.CTkLabel(left, text="", text_color=MUTED)
         self.review_counts_label.pack(anchor="w", padx=10, pady=(0, 5))
+        ctk.CTkButton(left, text="CLEAR ALL APP ARTICLES", fg_color="#991b1b", hover_color="#7f1d1d", command=self._clear_all).pack(fill="x", padx=10, pady=(0, 6))
         self.list_box = ctk.CTkScrollableFrame(left, fg_color=PANEL)
         self.list_box.pack(fill="both", expand=True, padx=8, pady=8)
         right = ctk.CTkFrame(layout, fg_color=PANEL)
@@ -116,6 +119,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         ctk.CTkOptionMenu(form, variable=self.notification_type_var, values=["Breaking news", "Local news", "Important update"]).pack(anchor="w", pady=(3, 8))
         self.notification_message_entry = self._entry(form, "Notification message (optional)")
         ctk.CTkButton(form, text="PREVIEW READER NOTIFICATION", command=self._preview_notification).pack(anchor="w", pady=(4, 10))
+        self.quality_label = ctk.CTkLabel(right, text="Editorial checks: Select an article", text_color=MUTED, justify="left", anchor="w", wraplength=850)
+        self.quality_label.pack(fill="x", padx=14, pady=(4, 0))
         controls = ctk.CTkFrame(right, fg_color="transparent")
         controls.pack(fill="x", padx=14, pady=12)
         ctk.CTkButton(controls, text="SAVE DRAFT", command=self._save, fg_color=BLUE).pack(side="left", padx=(0, 8))
@@ -361,6 +366,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._count_words()
         self._loaded_snapshot = self._editor_values()
         self._load_preview()
+        self._update_quality()
         self.status_label.configure(text=f"Editing {self.review_status.upper()} article: {article.title}")
 
     @staticmethod
@@ -372,6 +378,89 @@ class AppPublishingWindow(ctk.CTkToplevel):
         words = len(self.body_box.get("1.0", "end-1c").split())
         self.counter.configure(text=f"{words} words (approximately 500 target)")
 
+    def _quality_warnings(self):
+        warnings = []
+        title = self.title_entry.get().strip()
+        body = self.body_box.get("1.0", "end-1c").strip()
+        if not title:
+            warnings.append("Headline missing")
+        if not body:
+            warnings.append("Article body missing")
+        elif len(body.split()) < 200:
+            warnings.append("Short article (under 200 words; review recommended)")
+        if not self.category_var.get().strip():
+            warnings.append("Category missing")
+        if not self.areas_var.get().strip():
+            warnings.append("No specific town/area (countywide may be appropriate)")
+        image_url = self.image_entry.get().strip()
+        if not image_url and not self._preview_local_path:
+            warnings.append("No photograph (optional)")
+        elif not self.credit_entry.get().strip():
+            warnings.append("Image credit missing; check rights before publication")
+        return warnings
+
+    def _update_quality(self):
+        if not self.current_id:
+            self.quality_label.configure(text="Editorial checks: Select an article")
+            return
+        warnings = self._quality_warnings()
+        self.quality_label.configure(text=("Editorial checks: No warnings" if not warnings else
+                                          "Editorial checks (review before publishing): " + " | ".join(warnings)))
+
+    def _clear_all(self):
+        try:
+            count = len(self.store.load())
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("App Publishing", str(exc), parent=self)
+            return
+        if not count:
+            messagebox.showinfo("App Publishing", "There are no articles to clear.", parent=self)
+            return
+        if not messagebox.askyesno("CLEAR ALL App Publishing articles",
+            f"Delete ALL {count} App Publishing articles, including New, Draft and Ready?\\n\\n"
+            "This does not delete stories in their original NewsDesk modules.\\n"
+            "A dated backup will be created before deletion.", icon="warning", parent=self):
+            return
+        try:
+            backup_dir = self.store.path.parent / "clear_all_backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup = backup_dir / ("drafts-before-clear-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".json")
+            if self.store.path.exists():
+                shutil.copy2(self.store.path, backup)
+            self.store.save([])
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("App Publishing", "Clear cancelled: " + str(exc), parent=self)
+            return
+        self.current_id = None
+        self._loaded_snapshot = None
+        self.review_status = "new"
+        self._preview_token += 1
+        self._preview_started = 0.0
+        self._preview_local_path = ""
+        self._preview_image = None
+        self.image_preview.configure(image="", text="No image selected", height=7)
+        self._set_preview_status("Not loaded")
+        for entry in (self.title_entry, self.image_entry, self.caption_entry,
+                      self.credit_entry, self.notification_message_entry):
+            self._set_entry(entry, "")
+        self.body_box.delete("1.0", "end")
+        self.original_box.configure(state="normal")
+        self.original_box.delete("1.0", "end")
+        self.original_box.configure(state="disabled")
+        self.source_url = ""
+        self.source_label.configure(text="Source: -")
+        self.areas_var.set("")
+        self.category_var.set("")
+        self.notify_var.set(False)
+        self.review_filter_var.set("All")
+        self.search_var.set("")
+        self.ready_button.configure(text="MARK AS READY")
+        self._update_quality()
+        self._count_words()
+        self._refresh()
+        self.status_label.configure(text=f"Cleared {count} App Publishing articles. Backup: {backup}")
+        messagebox.showinfo("App Publishing", f"Cleared {count} articles.\\nBackup: {backup}", parent=self)
+
     def _mark_ready(self):
         if not self.current_id:
             messagebox.showinfo("App Publishing", "Select an article first.", parent=self)
@@ -381,6 +470,11 @@ class AppPublishingWindow(ctk.CTkToplevel):
             return
         if not self.title_entry.get().strip() or not self.body_box.get("1.0", "end-1c").strip():
             messagebox.showwarning("App Publishing", "A headline and article body are required before marking ready.", parent=self)
+            return
+        warnings = self._quality_warnings()
+        if warnings and not messagebox.askyesno("Editorial quality review",
+            "Review these points before marking Ready:\\n\\n" + "\\n".join("- " + item for item in warnings) +
+            "\\n\\nMark Ready anyway? (Nothing will be published.)", parent=self):
             return
         self._save(status="ready")
 
@@ -412,6 +506,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.ready_button.configure(text="RETURN TO DRAFT" if status == "ready" else "MARK AS READY")
         self.status_label.configure(text=("Marked READY for future publishing. Not published." if status == "ready" else "Local draft saved. Not published."))
         self._loaded_snapshot = self._editor_values()
+        self._update_quality()
         self._refresh()
         return True
 
