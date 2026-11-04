@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 from tkinter import messagebox
+import tkinter as tk
 from PIL import Image, ImageTk
 from io import BytesIO
 from pathlib import Path
@@ -86,7 +87,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.source_link.pack(anchor="w", pady=(3, 8))
         self.source_url = ""
         self.image_entry = self._entry(form, "Image URL")
-        self.image_preview = ctk.CTkLabel(form, text="No image selected", text_color=TEXT, height=110)
+        self.image_preview = tk.Label(form, text="No image selected", fg=TEXT, bg=PANEL, height=7, anchor="center")
         self.image_preview.pack(anchor="w", pady=(8, 3))
         self.preview_status_label = ctk.CTkLabel(form, text="Image status: Not loaded", text_color=MUTED)
         self.preview_status_label.pack(anchor="w")
@@ -199,7 +200,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     continue
                 self._preview_started = 0.0
                 if error:
-                    self.image_preview.configure(image=None, text="Image unavailable")
+                    self.image_preview.configure(image="", text="Image unavailable")
                     self._set_preview_status("Download failed", error)
                 else:
                     try:
@@ -208,10 +209,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
                         # root, which fails in a separate CTkToplevel window.
                         preview = ImageTk.PhotoImage(result, master=self.image_preview)
                         self._preview_image = preview
-                        self.image_preview.configure(image=preview, text="")
+                        self.image_preview.configure(image=preview, text="", height=0)
                         self._set_preview_status("Loaded")
                     except Exception as exc:
-                        self.image_preview.configure(image=None, text="Image unavailable")
+                        self.image_preview.configure(image="", text="Image unavailable")
                         self._set_preview_status("Display failed", str(exc))
         except Exception as exc:
             # Even a Tk display error must not silently kill future polling.
@@ -231,7 +232,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
             return
         self._preview_started = 0.0
         self._preview_token += 1
-        self.image_preview.configure(image=None, text="Image preview timed out")
+        self.image_preview.configure(image="", text="Image preview timed out")
         self._set_preview_status("Timed out", "No response within 10 seconds")
 
     def _load_preview(self):
@@ -239,19 +240,19 @@ class AppPublishingWindow(ctk.CTkToplevel):
         token = self._preview_token
         self._preview_image = None
         self._preview_started = time.monotonic()
-        self.image_preview.configure(image=None, text="Loading image preview...")
+        self.image_preview.configure(image="", text="Loading image preview...", height=7)
         self._set_preview_status("Loading")
         url = self.image_entry.get().strip()
         local_path = self._preview_local_path
         parsed = urlparse(url)
         if "placeholder" in parsed.path.casefold():
             self._preview_started = 0.0
-            self.image_preview.configure(image=None, text="No story photograph supplied")
+            self.image_preview.configure(image="", text="No story photograph supplied")
             self._set_preview_status("Missing", "Source placeholder")
             return
         if (parsed.scheme != "https" or not parsed.netloc) and not local_path:
             self._preview_started = 0.0
-            self.image_preview.configure(image=None, text="No valid image available")
+            self.image_preview.configure(image="", text="No valid image available")
             self._set_preview_status("Missing", "No local file or HTTPS image URL")
             return
 
