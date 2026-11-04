@@ -188,10 +188,13 @@ class AppPublishingWindow(ctk.CTkToplevel):
         )
 
     def _poll_preview(self):
-        # The GUI thread alone owns all Tk/CustomTkinter widget updates.
+        # A failed preview must never permanently stop the queue polling loop.
         try:
-            while True:
-                token, result, error = self._preview_results.get_nowait()
+            for _ in range(20):
+                try:
+                    token, result, error = self._preview_results.get_nowait()
+                except queue.Empty:
+                    break
                 if token != self._preview_token:
                     continue
                 self._preview_started = 0.0
@@ -200,23 +203,35 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     self._set_preview_status("Download failed", error)
                 else:
                     try:
-                        self._preview_image = ctk.CTkImage(
+                        preview = ctk.CTkImage(
                             light_image=result, dark_image=result, size=result.size
                         )
-                        self.image_preview.configure(image=self._preview_image, text="")
+                        self.image_preview.configure(image=preview, text="")
+                        self._preview_image = preview
                         self._set_preview_status("Loaded")
                     except Exception as exc:
                         self.image_preview.configure(image=None, text="Image unavailable")
                         self._set_preview_status("Display failed", str(exc))
-        except queue.Empty:
-            pass
-        if self._preview_started and time.monotonic() - self._preview_started > 10:
-            self._preview_started = 0.0
-            self._preview_token += 1
-            self.image_preview.configure(image=None, text="Image preview timed out")
-            self._set_preview_status("Timed out")
-        if self.winfo_exists():
-            self.after(150, self._poll_preview)
+        except Exception as exc:
+            # Even a Tk display error must not silently kill future polling.
+            try:
+                self._set_preview_status("Display failed", str(exc))
+            except Exception:
+                pass
+        finally:
+            try:
+                if self.winfo_exists():
+                    self.after(150, self._poll_preview)
+            except Exception:
+                pass
+
+    def _preview_timeout(self, token):
+        if token != self._preview_token or not self._preview_started:
+            return
+        self._preview_started = 0.0
+        self._preview_token += 1
+        self.image_preview.configure(image=None, text="Image preview timed out")
+        self._set_preview_status("Timed out", "No response within 10 seconds")
 
     def _load_preview(self):
         self._preview_token += 1
@@ -226,29 +241,41 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.image_preview.configure(image=None, text="Loading image preview...")
         self._set_preview_status("Loading")
         url = self.image_entry.get().strip()
+        local_path = self._preview_local_path
         parsed = urlparse(url)
         if "placeholder" in parsed.path.casefold():
             self._preview_started = 0.0
-            self.image_preview.configure(text="No story photograph supplied")
+            self.image_preview.configure(image=None, text="No story photograph supplied")
             self._set_preview_status("Missing", "Source placeholder")
             return
-        local_path = Path(self._preview_local_path) if self._preview_local_path else None
-        if local_path and local_path.is_file():
-            try:
-                with Image.open(local_path) as local_image:
-                    local_image.thumbnail((500, 250))
-                    result = local_image.copy()
-                self._preview_results.put((token, result, None))
-                return
-            except (OSError, ValueError):
-                pass
-        if parsed.scheme != "https" or not parsed.netloc:
+        if (parsed.scheme != "https" or not parsed.netloc) and not local_path:
             self._preview_started = 0.0
-            self.image_preview.configure(text="No valid HTTPS image URL")
-            self._set_preview_status("Missing", "No valid HTTPS image URL")
+            self.image_preview.configure(image=None, text="No valid image available")
+            self._set_preview_status("Missing", "No local file or HTTPS image URL")
             return
 
+        # Schedule a separate one-shot timeout on the GUI event loop.
+        # Image filesystem checks, decoding and network access stay in the worker.
+        self.after(10000, lambda requested=token: self._preview_timeout(requested))
+
         def fetch():
+            local_error = None
+            if local_path:
+                try:
+                    path = Path(local_path)
+                    if path.is_file():
+                        with Image.open(path) as img:
+                            img.thumbnail((500, 250))
+                            img.load()
+                            self._preview_results.put((token, img.copy(), None))
+                            return
+                except Exception as exc:
+                    local_error = str(exc)
+            if parsed.scheme != "https" or not parsed.netloc:
+                self._preview_results.put(
+                    (token, None, local_error or "No HTTPS fallback URL")
+                )
+                return
             try:
                 with urlopen(url, timeout=6) as response:
                     content_type = response.headers.get("Content-Type", "").lower()
@@ -257,10 +284,11 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     data = response.read(5_000_001)
                     if len(data) > 5_000_000:
                         raise ValueError("Image exceeds 5 MB limit")
-                image = Image.open(BytesIO(data))
-                image.thumbnail((500, 250))
-                image.load()
-                self._preview_results.put((token, image.copy(), None))
+                with Image.open(BytesIO(data)) as img:
+                    img.thumbnail((500, 250))
+                    img.load()
+                    result = img.copy()
+                self._preview_results.put((token, result, None))
             except Exception as exc:
                 self._preview_results.put((token, None, str(exc)))
 
