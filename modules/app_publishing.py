@@ -21,6 +21,7 @@ import shutil
 from datetime import datetime
 
 from newsdesk.app_publishing.store import AppArticleStore
+from newsdesk.app_publishing.mobile_payload import write_export
 from newsdesk.app_publishing.areas import available_areas
 
 BG = "#0f172a"
@@ -128,6 +129,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.ready_button.pack(side="left", padx=(0, 8))
         ctk.CTkButton(controls, text="PUBLISH (NOT CONNECTED)", state="disabled").pack(side="left", padx=(0, 8))
         ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", state="disabled").pack(side="left")
+        ctk.CTkButton(controls, text="EXPORT READY PREVIEW", command=self._export_ready_preview).pack(side="left", padx=(0, 8))
         self.status_label = ctk.CTkLabel(right, text="Select an article to edit", text_color=MUTED)
         self.status_label.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -460,6 +462,21 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._refresh()
         self.status_label.configure(text=f"Cleared {count} App Publishing articles. Backup: {backup}")
         messagebox.showinfo("App Publishing", f"Cleared {count} articles.\\nBackup: {backup}", parent=self)
+
+    def _export_ready_preview(self):
+        """Export a local test feed; never send content to a server."""
+        try:
+            destination = self.store.path.parent / "mobile_preview" / "ready_articles.json"
+            count = write_export(self.store.load(), destination)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Mobile preview export", str(exc), parent=self)
+            return
+        messagebox.showinfo(
+            "Mobile preview export",
+            f"Prepared {count} Ready articles for offline testing.\\n\\n"
+            f"File: {destination}\\n\\nNothing was published or uploaded.",
+            parent=self,
+        )
 
     def _mark_ready(self):
         if not self.current_id:
