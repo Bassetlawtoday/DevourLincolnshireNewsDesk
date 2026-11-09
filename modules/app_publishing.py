@@ -24,6 +24,8 @@ import hashlib
 import hmac
 import getpass
 import html
+import subprocess
+from urllib.error import HTTPError
 from datetime import datetime
 
 from newsdesk.app_publishing.store import AppArticleStore
@@ -73,7 +75,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
 
     def _build(self):
         ctk.CTkLabel(self, text="DEVOUR NEWS  |  APP PUBLISHING", font=("Arial", 24, "bold"), text_color=TEXT).pack(anchor="w", padx=22, pady=(20, 4))
-        ctk.CTkLabel(self, text="V3.0 private upload, controlled publication and reader preview", text_color=MUTED).pack(anchor="w", padx=22)
+        ctk.CTkLabel(self, text="V3.1 publication and reader preview", text_color=MUTED).pack(anchor="w", padx=22)
         layout = ctk.CTkFrame(self, fg_color="transparent")
         layout.pack(fill="both", expand=True, padx=18, pady=15)
         layout.grid_columnconfigure(0, weight=0, minsize=340)
@@ -361,7 +363,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     if error:
                         messagebox.showerror("Reader preview", error, parent=self)
                     else:
-                        webbrowser.open(result.as_uri())
+                        try:
+                            self._open_reader_browser(result)
+                        except Exception as exc:
+                            messagebox.showwarning("Reader preview", "Preview saved at: " + str(result) + "\n\nBrowser launch failed: " + str(exc), parent=self)
                     continue
                 if token == "connection":
                     self.status_label.configure(text=error)
@@ -837,17 +842,41 @@ class AppPublishingWindow(ctk.CTkToplevel):
                         or payload.get("article_id") != article_id or payload.get("notification_sent") is not False):
                         raise ValueError("Unexpected publication response")
                 error = None
+            except HTTPError as exc:
+                payload = {}
+                error = ("HTTP 404: article missing or endpoint unavailable. Check cloud status." if exc.code == 404
+                         else "Publication HTTP " + str(exc.code) + ": " + str(exc.reason))
             except Exception as exc:
                 payload = {}
                 error = "Publication failed: " + str(exc)
             self._preview_results.put(("publication", (action, article_id, payload), error))
         Thread(target=worker, daemon=True).start()
 
+    @staticmethod
+    def _open_reader_browser(path):
+        path = Path(path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(str(path))
+        if os.name == 'nt':
+            candidates = [shutil.which('msedge.exe'),
+                os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+                os.path.join(os.environ.get('PROGRAMFILES', ''), 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'Edge', 'Application', 'msedge.exe')]
+            for executable in candidates:
+                if executable and os.path.isfile(executable):
+                    subprocess.Popen([executable, path.as_uri()])
+                    return
+            os.startfile(str(path))
+            return
+        if not webbrowser.open(path.as_uri()):
+            raise RuntimeError('No browser accepted the preview URL')
+
     def _live_reader(self):
         if self._cloud_busy:
             messagebox.showwarning("Reader preview", "Cloud operation in progress.", parent=self)
             return
         self._cloud_busy = True
+        self.status_label.configure(text="Loading live reader preview...")
         def worker():
             try:
                 endpoint = "https://onmmfbyocbnwbqxmdthe.supabase.co/functions/v1/devour-published-feed"
