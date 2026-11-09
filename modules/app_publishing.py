@@ -53,6 +53,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._preview_results = queue.Queue()
         self._preview_status = 'Idle'
         self._upload_in_progress = False
+        self._uploaded_receipts_path = self.store.path.parent / "uploaded_article_receipts.json"
         self.search_var = ctk.StringVar()
         self.review_filter_var = ctk.StringVar(value="All")
         self.review_status = "new"
@@ -142,7 +143,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.upload_button.grid(row=0, column=2, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="EXPORT READY PREVIEW", height=36, command=self._export_ready_preview).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="TEST SUPABASE CONNECTION", height=36, command=self._test_supabase_connection).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ctk.CTkButton(controls, text="CLOUD DELETE (NOT CONNECTED)", height=36, state="disabled").grid(row=1, column=2, sticky="ew", padx=4, pady=4)
+        ctk.CTkButton(controls, text="CLOUD DELETE (AWAITING SECURE API)", height=36, state="disabled").grid(row=1, column=2, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="PUBLISH (NOT CONNECTED)", height=36, state="disabled").grid(row=2, column=0, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", height=36, state="disabled").grid(row=2, column=1, sticky="ew", padx=4, pady=4)
         ctk.CTkLabel(controls, text="Local deletion never removes a Supabase copy.", text_color=MUTED).grid(row=2, column=2, sticky="w", padx=6)
@@ -182,14 +183,38 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 continue
             if query and query not in (article.title + " " + article.body).casefold():
                 continue
-            headline = textwrap.shorten(article.title or "Untitled", width=95, placeholder="...")
-            wrapped = textwrap.fill(headline, width=40, max_lines=2, placeholder="...")
+            headline = article.title or "Untitled"
+            wrapped = textwrap.fill(headline, width=36, max_lines=3, placeholder="...")
+            cloud_marker = " [UPLOADED]" if article.article_id in self._local_upload_receipts() else ""
             ctk.CTkButton(
-                self.list_box, text=f"[{state.upper()}]  {wrapped}",
-                anchor="w", fg_color="#334155", height=62,
+                self.list_box, text=f"[{state.upper()}]{cloud_marker}  {wrapped}",
+                anchor="w", fg_color="#334155", height=84,
                 font=("Arial", 14),
                 command=lambda item=article: self._open_article(item),
             ).pack(fill="x", pady=3)
+
+    def _local_upload_receipts(self):
+        """Local upload confirmations; not a live cloud inventory."""
+        try:
+            with self._uploaded_receipts_path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, OSError, ValueError):
+            return {}
+
+    def _record_uploaded_receipt(self, article_id):
+        receipts = self._local_upload_receipts()
+        receipts[article_id] = datetime.now().astimezone().isoformat()
+        path = self._uploaded_receipts_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        staged = path.with_suffix(".tmp")
+        try:
+            with staged.open("w", encoding="utf-8") as handle:
+                json.dump(receipts, handle, indent=2)
+            staged.replace(path)
+        finally:
+            if staged.exists():
+                staged.unlink()
 
     def _add_area(self, value):
         if value == "All Lincolnshire":
@@ -250,6 +275,12 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     self._upload_in_progress = False
                     self.upload_button.configure(state="normal")
                     self.status_label.configure(text=error)
+                    if result and isinstance(result, str):
+                        try:
+                            self._record_uploaded_receipt(result)
+                            self._refresh()
+                        except (OSError, ValueError) as exc:
+                            error += "\\n\\nLocal receipt not saved: " + str(exc)
                     (messagebox.showinfo if result else messagebox.showerror)("Secure article upload", error, parent=self)
                     continue
                 if token == "connection":
@@ -398,7 +429,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._loaded_snapshot = self._editor_values()
         self._load_preview()
         self._update_quality()
-        self.status_label.configure(text=f"Editing {self.review_status.upper()} article: {article.title}")
+        receipt = self._local_upload_receipts().get(article.article_id)
+        cloud_status = ("Uploaded privately (local receipt: " + receipt + ")" if receipt else
+                        "No upload recorded locally; cloud status not verified")
+        self.status_label.configure(text=f"Editing {self.review_status.upper()} article: {article.title} | {cloud_status}")
 
     @staticmethod
     def _set_entry(entry, value):
@@ -621,7 +655,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
             except Exception as exc:
                 success = False
                 message = "Upload failed: " + str(exc)
-            self._preview_results.put(("upload", success, message))
+            self._preview_results.put(("upload", article.article_id if success else None, message))
         Thread(target=worker, daemon=True).start()
 
     def _test_supabase_connection(self):
