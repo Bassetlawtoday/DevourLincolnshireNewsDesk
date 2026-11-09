@@ -23,6 +23,7 @@ import os
 import hashlib
 import hmac
 import getpass
+import html
 from datetime import datetime
 
 from newsdesk.app_publishing.store import AppArticleStore
@@ -72,7 +73,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
 
     def _build(self):
         ctk.CTkLabel(self, text="DEVOUR NEWS  |  APP PUBLISHING", font=("Arial", 24, "bold"), text_color=TEXT).pack(anchor="w", padx=22, pady=(20, 4))
-        ctk.CTkLabel(self, text="Private Supabase uploads available - public publishing and withdrawal not connected", text_color=MUTED).pack(anchor="w", padx=22)
+        ctk.CTkLabel(self, text="V3.0 private upload, controlled publication and reader preview", text_color=MUTED).pack(anchor="w", padx=22)
         layout = ctk.CTkFrame(self, fg_color="transparent")
         layout.pack(fill="both", expand=True, padx=18, pady=15)
         layout.grid_columnconfigure(0, weight=0, minsize=340)
@@ -149,9 +150,10 @@ class AppPublishingWindow(ctk.CTkToplevel):
         ctk.CTkButton(controls, text="TEST SUPABASE CONNECTION", height=36, command=self._test_supabase_connection).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="CHECK CLOUD STATUS", height=36, command=self._check_cloud).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="DELETE FROM SUPABASE", height=36, fg_color="#991b1b", command=self._delete_cloud).grid(row=3, column=0, sticky="ew", padx=4, pady=4)
-        ctk.CTkButton(controls, text="PUBLISH (NOT CONNECTED)", height=36, state="disabled").grid(row=2, column=0, sticky="ew", padx=4, pady=4)
-        ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", height=36, state="disabled").grid(row=2, column=1, sticky="ew", padx=4, pady=4)
+        ctk.CTkButton(controls, text="PUBLISH ARTICLE", height=36, command=lambda: self._publish_action("publish")).grid(row=2, column=0, sticky="ew", padx=4, pady=4)
+        ctk.CTkButton(controls, text="WITHDRAW ARTICLE", height=36, command=lambda: self._publish_action("withdraw")).grid(row=2, column=1, sticky="ew", padx=4, pady=4)
         ctk.CTkLabel(controls, text="Local deletion never removes a Supabase copy.", text_color=MUTED).grid(row=2, column=2, sticky="w", padx=6)
+        ctk.CTkButton(controls, text="OPEN LIVE READER PREVIEW", height=36, command=self._live_reader).grid(row=3, column=1, columnspan=2, sticky="ew", padx=4, pady=4)
         self.status_label = ctk.CTkLabel(right, text="Select an article to edit", text_color=MUTED)
         self.status_label.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -191,7 +193,9 @@ class AppPublishingWindow(ctk.CTkToplevel):
             headline = article.title or "Untitled"
             wrapped = textwrap.fill(headline, width=36, max_lines=3, placeholder="...")
             cloud_state = self._cloud_statuses.get(article.article_id)
-            cloud_marker = (" [LAST CHECK: FOUND]" if cloud_state == "found"
+            cloud_marker = (" [LAST ACTION: PUBLISHED]" if cloud_state == "published"
+                            else " [LAST ACTION: WITHDRAWN]" if cloud_state == "withdrawn"
+                            else " [LAST CHECK: FOUND]" if cloud_state == "found"
                             else " [LAST CHECK: DELETED]" if cloud_state == "deleted"
                             else " [LAST CHECK: ABSENT]" if cloud_state == "not_found"
                             else " [UPLOADED]" if article.article_id in self._local_upload_receipts()
@@ -208,12 +212,12 @@ class AppPublishingWindow(ctk.CTkToplevel):
             with self._cloud_status_path.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
             return {k: v for k, v in data.items()
-                    if isinstance(k, str) and v in ("found", "deleted", "not_found")} if isinstance(data, dict) else {}
+                    if isinstance(k, str) and v in ("found", "deleted", "not_found", "published", "withdrawn")} if isinstance(data, dict) else {}
         except (FileNotFoundError, OSError, ValueError):
             return {}
 
     def _remember_cloud_status(self, article_id, status):
-        if status not in ("found", "deleted", "not_found"):
+        if status not in ("found", "deleted", "not_found", "published", "withdrawn"):
             return
         self._cloud_statuses[article_id] = status
         path = self._cloud_status_path
@@ -341,6 +345,23 @@ class AppPublishingWindow(ctk.CTkToplevel):
                             messagebox.showinfo("Cloud deletion", "Deleted from Supabase. Local article retained.", parent=self)
                         else:
                             messagebox.showerror("Cloud deletion", "Cloud deletion not confirmed.", parent=self)
+                    continue
+                if token == "publication":
+                    self._cloud_busy = False
+                    action, article_id, payload = result
+                    if error:
+                        messagebox.showerror("Publication", error, parent=self)
+                    else:
+                        self._remember_cloud_status(article_id, payload["status"])
+                        self._refresh()
+                        messagebox.showinfo("Publication", "Article " + payload["status"] + ". No notifications sent.", parent=self)
+                    continue
+                if token == "reader":
+                    self._cloud_busy = False
+                    if error:
+                        messagebox.showerror("Reader preview", error, parent=self)
+                    else:
+                        webbrowser.open(result.as_uri())
                     continue
                 if token == "connection":
                     self.status_label.configure(text=error)
@@ -776,6 +797,98 @@ class AppPublishingWindow(ctk.CTkToplevel):
             return
         self._verified_cloud_id = None
         self._cloud_request("delete", article_id)
+
+    def _publish_action(self, action):
+        if not self.current_id:
+            messagebox.showinfo("Publication", "Select an article first.", parent=self)
+            return
+        if self._cloud_busy or self._upload_in_progress:
+            messagebox.showwarning("Publication", "Wait for the current operation.", parent=self)
+            return
+        article = next((a for a in self.store.load() if a.article_id == self.current_id), None)
+        if article is None:
+            messagebox.showerror("Publication", "Article not found locally.", parent=self)
+            return
+        if self._loaded_snapshot is None or self._editor_values() != self._loaded_snapshot:
+            messagebox.showwarning("Publication", "Save edits before publication.", parent=self)
+            return
+        if action == "publish" and self._review_state(article) != "ready":
+            messagebox.showwarning("Publication", "Only Ready articles can be published.", parent=self)
+            return
+        if not messagebox.askyesno("Confirm " + action,
+            ("Publish this article to the PUBLIC reader feed?" if action == "publish" else "Withdraw this article from the PUBLIC reader feed?") +
+            "\n\n" + article.title + "\n\nArticle ID: " + article.article_id +
+            "\n\nNo notifications will be sent.", icon="warning", parent=self):
+            return
+        token = os.environ.get("NEWSDESK_UPLOAD_TOKEN", "").strip()
+        if not token:
+            messagebox.showerror("Publication", "NEWSDESK_UPLOAD_TOKEN is missing.", parent=self)
+            return
+        self._cloud_busy = True
+        article_id = article.article_id
+        def worker():
+            try:
+                endpoint = "https://onmmfbyocbnwbqxmdthe.supabase.co/functions/v1/newsdesk-article-publication"
+                body = json.dumps({"action": action, "article_id": article_id, "confirm": True}).encode("utf-8")
+                request = Request(endpoint, data=body, method="POST", headers={"Content-Type": "application/json", "x-newsdesk-token": token})
+                with urlopen(request, timeout=20) as response:
+                    payload = json.loads(response.read(8192).decode("utf-8"))
+                    if (response.status != 200 or payload.get("status") != ("published" if action == "publish" else "withdrawn")
+                        or payload.get("article_id") != article_id or payload.get("notification_sent") is not False):
+                        raise ValueError("Unexpected publication response")
+                error = None
+            except Exception as exc:
+                payload = {}
+                error = "Publication failed: " + str(exc)
+            self._preview_results.put(("publication", (action, article_id, payload), error))
+        Thread(target=worker, daemon=True).start()
+
+    def _live_reader(self):
+        if self._cloud_busy:
+            messagebox.showwarning("Reader preview", "Cloud operation in progress.", parent=self)
+            return
+        self._cloud_busy = True
+        def worker():
+            try:
+                endpoint = "https://onmmfbyocbnwbqxmdthe.supabase.co/functions/v1/devour-published-feed"
+                body = json.dumps({"county": "Lincolnshire", "limit": 50}).encode("utf-8")
+                request = Request(endpoint, data=body, method="POST", headers={"Content-Type": "application/json"})
+                with urlopen(request, timeout=20) as response:
+                    raw = response.read(2000001)
+                    if len(raw) > 2000000:
+                        raise ValueError("Feed too large")
+                    feed = json.loads(raw.decode("utf-8"))
+                if feed.get("application") != "Devour News" or not isinstance(feed.get("articles"), list):
+                    raise ValueError("Unexpected feed response")
+                esc = lambda value: html.escape(str(value or ""), quote=True)
+                cards = []
+                for item in feed["articles"]:
+                    image_url = str(item.get("image_url") or "")
+                    source_url = str(item.get("source_url") or "")
+                    image = '<img src="' + esc(image_url) + '" alt="">' if urlparse(image_url).scheme == "https" else ""
+                    link = '<a href="' + esc(source_url) + '" target="_blank" rel="noopener noreferrer">Original source</a>' if urlparse(source_url).scheme == "https" else ""
+                    cards.append('<article>' + image + '<div class="content"><small>' + esc(item.get("category")) +
+                        ' · ' + esc(item.get("county")) + '</small><h2>' + esc(item.get("headline")) +
+                        '</h2><p>' + esc(item.get("body")).replace("\n", "<br>") +
+                        '</p><small>' + esc(item.get("image_caption")) + ' ' + esc(item.get("image_credit")) +
+                        '</small><p>' + esc(item.get("source_name")) + ' ' + link + '</p></div></article>')
+                page = ('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                    '<title>Devour News Reader Preview</title><style>body{font:16px/1.6 system-ui;background:#f1f5f9;color:#172033;margin:0}'
+                    'header{background:#14213d;color:white;padding:24px;text-align:center}main{max-width:560px;margin:20px auto;padding:0 12px}'
+                    'article{background:white;border-radius:14px;overflow:hidden;margin:18px 0;box-shadow:0 2px 12px #0001}'
+                    'article img{width:100%;max-height:330px;object-fit:cover}.content{padding:20px}h2{line-height:1.25}'
+                    'small{color:#64748b}a{color:#1d4ed8}p{overflow-wrap:anywhere}</style>'
+                    '<header><h1>DEVOUR NEWS</h1><div>Lincolnshire · Live reader preview</div></header><main><p>Published articles: ' +
+                    str(len(cards)) + '</p>' + (''.join(cards) if cards else '<p>No published articles available.</p>') + '</main></html>')
+                destination = self.store.path.parent / "mobile_preview" / "live_reader.html"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(page, encoding="utf-8")
+                error = None
+            except Exception as exc:
+                destination = None
+                error = "Reader preview failed: " + str(exc)
+            self._preview_results.put(("reader", destination, error))
+        Thread(target=worker, daemon=True).start()
 
     def _test_supabase_connection(self):
         """Check the public, read-only Edge Function without credentials or article data."""
