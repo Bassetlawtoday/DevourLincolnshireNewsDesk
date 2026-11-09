@@ -81,6 +81,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
                           command=lambda _value: self._refresh()).pack(fill="x", padx=10, pady=(0, 6))
         self.review_counts_label = ctk.CTkLabel(left, text="", text_color=MUTED)
         self.review_counts_label.pack(anchor="w", padx=10, pady=(0, 5))
+        ctk.CTkButton(left, text="DELETE SELECTED ARTICLE", fg_color="#9a3412", hover_color="#7c2d12", command=self._delete_selected).pack(fill="x", padx=10, pady=(0, 6))
         ctk.CTkButton(left, text="CLEAR ALL APP ARTICLES", fg_color="#991b1b", hover_color="#7f1d1d", command=self._clear_all).pack(fill="x", padx=10, pady=(0, 6))
         self.list_box = ctk.CTkScrollableFrame(left, fg_color=PANEL)
         self.list_box.pack(fill="both", expand=True, padx=8, pady=8)
@@ -430,6 +431,70 @@ class AppPublishingWindow(ctk.CTkToplevel):
         warnings = self._quality_warnings()
         self.quality_label.configure(text=("Editorial checks: No warnings" if not warnings else
                                           "Editorial checks (review before publishing): " + " | ".join(warnings)))
+
+    def _delete_selected(self):
+        """Delete one local App Publishing article, never the source or cloud copy."""
+        if self._upload_in_progress:
+            messagebox.showwarning("App Publishing", "Wait until the current upload finishes.", parent=self)
+            return
+        if not self.current_id:
+            messagebox.showinfo("App Publishing", "Select an article to delete.", parent=self)
+            return
+        try:
+            articles = self.store.load()
+            selected = next((item for item in articles if item.article_id == self.current_id), None)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("App Publishing", str(exc), parent=self)
+            return
+        if selected is None:
+            messagebox.showerror("App Publishing", "This article is no longer in App Publishing.", parent=self)
+            return
+        if not messagebox.askyesno(
+            "Delete selected article locally",
+            f"Delete this {self._review_state(selected).upper()} article from App Publishing?\\n\\n"
+            f"{selected.title}\\n\\n"
+            "Any copy already stored or published in Supabase will remain untouched.\\n"
+            "Original stories in NewsDesk collection modules will remain untouched.\\n\\n"
+            "A dated backup will be created before deletion.",
+            icon="warning", parent=self,
+        ):
+            return
+        try:
+            backup_dir = self.store.path.parent / "individual_delete_backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup = backup_dir / ("drafts-before-delete-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".json")
+            if self.store.path.exists():
+                shutil.copy2(self.store.path, backup)
+            self.store.save([item for item in articles if item.article_id != selected.article_id])
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("App Publishing", "Deletion cancelled: " + str(exc), parent=self)
+            return
+        self.current_id = None
+        self._loaded_snapshot = None
+        self.review_status = "new"
+        self._preview_token += 1
+        self._preview_started = 0.0
+        self._preview_local_path = ""
+        self._preview_image = None
+        self.image_preview.configure(image="", text="No image selected", height=7)
+        self._set_preview_status("Not loaded")
+        for entry in (self.title_entry, self.image_entry, self.caption_entry,
+                      self.credit_entry, self.notification_message_entry):
+            self._set_entry(entry, "")
+        self.body_box.delete("1.0", "end")
+        self.original_box.configure(state="normal")
+        self.original_box.delete("1.0", "end")
+        self.original_box.configure(state="disabled")
+        self.source_url = ""
+        self.source_label.configure(text="Source: -")
+        self.areas_var.set("")
+        self.category_var.set("")
+        self.notify_var.set(False)
+        self.ready_button.configure(text="MARK AS READY")
+        self._update_quality()
+        self._count_words()
+        self._refresh()
+        self.status_label.configure(text=f"Deleted locally: {selected.title}. Cloud copy untouched. Backup: {backup}")
 
     def _clear_all(self):
         try:
