@@ -55,6 +55,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._upload_in_progress = False
         self._cloud_busy = False
         self._verified_cloud_id = None
+        self._cloud_statuses = {}
         self._uploaded_receipts_path = self.store.path.parent / "uploaded_article_receipts.json"
         self.search_var = ctk.StringVar()
         self.review_filter_var = ctk.StringVar(value="All")
@@ -188,7 +189,12 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 continue
             headline = article.title or "Untitled"
             wrapped = textwrap.fill(headline, width=36, max_lines=3, placeholder="...")
-            cloud_marker = " [UPLOADED]" if article.article_id in self._local_upload_receipts() else ""
+            cloud_state = self._cloud_statuses.get(article.article_id)
+            cloud_marker = (" [CLOUD CONFIRMED]" if cloud_state == "found"
+                            else " [CLOUD DELETED]" if cloud_state == "deleted"
+                            else " [NOT IN CLOUD]" if cloud_state == "not_found"
+                            else " [UPLOADED]" if article.article_id in self._local_upload_receipts()
+                            else "")
             ctk.CTkButton(
                 self.list_box, text=f"[{state.upper()}]{cloud_marker}  {wrapped}",
                 anchor="w", fg_color="#334155", height=84,
@@ -281,6 +287,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     if result and isinstance(result, str):
                         try:
                             self._record_uploaded_receipt(result)
+                            self._cloud_statuses[result] = "found"
                             self._refresh()
                         except (OSError, ValueError) as exc:
                             error += "\\n\\nLocal receipt not saved: " + str(exc)
@@ -295,12 +302,17 @@ class AppPublishingWindow(ctk.CTkToplevel):
                         found = payload.get("status") == "found" and payload.get("exists") is True
                         missing = payload.get("status") == "not_found" and payload.get("exists") is False
                         self._verified_cloud_id = article_id if found else None
+                        if found or missing:
+                            self._cloud_statuses[article_id] = "found" if found else "not_found"
+                            self._refresh()
                         message = ("Found in Supabase: " + str(payload.get("headline"))) if found else ("Not found in Supabase" if missing else "Unexpected lookup response")
                         self.status_label.configure(text=message)
                         messagebox.showinfo("Cloud status", message, parent=self)
                     elif action == "delete":
                         if payload.get("status") == "deleted" and payload.get("deleted") is True:
                             self._verified_cloud_id = None
+                            self._cloud_statuses[article_id] = "deleted"
+                            self._refresh()
                             messagebox.showinfo("Cloud deletion", "Deleted from Supabase. Local article retained.", parent=self)
                         else:
                             messagebox.showerror("Cloud deletion", "Cloud deletion not confirmed.", parent=self)
@@ -729,8 +741,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         article_id = self.current_id
         headline = self.title_entry.get().strip()
         if not messagebox.askyesno("Permanent Supabase deletion",
-            "DELETE FROM SUPABASE?\\n\\n" + headline + "\\nID: " + article_id +
-            "\\n\\nIf published, this removes the article from the app feed. The local article remains.",
+            "DELETE FROM SUPABASE?\n\n" + headline + "\nID: " + article_id +
+            "\n\nIf published, this removes the article from the app feed. The local article remains.",
             icon="warning", parent=self):
             return
         if not messagebox.askyesno("Final cloud deletion confirmation",
