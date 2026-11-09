@@ -53,6 +53,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._preview_results = queue.Queue()
         self._preview_status = 'Idle'
         self._upload_in_progress = False
+        self._cloud_busy = False
+        self._verified_cloud_id = None
         self._uploaded_receipts_path = self.store.path.parent / "uploaded_article_receipts.json"
         self.search_var = ctk.StringVar()
         self.review_filter_var = ctk.StringVar(value="All")
@@ -143,7 +145,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self.upload_button.grid(row=0, column=2, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="EXPORT READY PREVIEW", height=36, command=self._export_ready_preview).grid(row=1, column=0, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="TEST SUPABASE CONNECTION", height=36, command=self._test_supabase_connection).grid(row=1, column=1, sticky="ew", padx=4, pady=4)
-        ctk.CTkButton(controls, text="CLOUD DELETE (AWAITING SECURE API)", height=36, state="disabled").grid(row=1, column=2, sticky="ew", padx=4, pady=4)
+        ctk.CTkButton(controls, text="CHECK CLOUD STATUS", height=36, command=self._check_cloud).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
+        ctk.CTkButton(controls, text="DELETE FROM SUPABASE", height=36, fg_color="#991b1b", command=self._delete_cloud).grid(row=3, column=0, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="PUBLISH (NOT CONNECTED)", height=36, state="disabled").grid(row=2, column=0, sticky="ew", padx=4, pady=4)
         ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", height=36, state="disabled").grid(row=2, column=1, sticky="ew", padx=4, pady=4)
         ctk.CTkLabel(controls, text="Local deletion never removes a Supabase copy.", text_color=MUTED).grid(row=2, column=2, sticky="w", padx=6)
@@ -283,6 +286,25 @@ class AppPublishingWindow(ctk.CTkToplevel):
                             error += "\\n\\nLocal receipt not saved: " + str(exc)
                     (messagebox.showinfo if result else messagebox.showerror)("Secure article upload", error, parent=self)
                     continue
+                if token == "cloud":
+                    self._cloud_busy = False
+                    action, article_id, payload = result
+                    if error:
+                        messagebox.showerror("Cloud management", error, parent=self)
+                    elif action == "check":
+                        found = payload.get("status") == "found" and payload.get("exists") is True
+                        missing = payload.get("status") == "not_found" and payload.get("exists") is False
+                        self._verified_cloud_id = article_id if found else None
+                        message = ("Found in Supabase: " + str(payload.get("headline"))) if found else ("Not found in Supabase" if missing else "Unexpected lookup response")
+                        self.status_label.configure(text=message)
+                        messagebox.showinfo("Cloud status", message, parent=self)
+                    elif action == "delete":
+                        if payload.get("status") == "deleted" and payload.get("deleted") is True:
+                            self._verified_cloud_id = None
+                            messagebox.showinfo("Cloud deletion", "Deleted from Supabase. Local article retained.", parent=self)
+                        else:
+                            messagebox.showerror("Cloud deletion", "Cloud deletion not confirmed.", parent=self)
+                    continue
                 if token == "connection":
                     self.status_label.configure(text=error)
                     if result:
@@ -403,6 +425,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     return
                 if choice and not self._save():
                     return
+        self._verified_cloud_id = None
         self.current_id = article.article_id
         self.review_status = self._review_state(article)
         self.ready_button.configure(text="RETURN TO DRAFT" if self.review_status == "ready" else "MARK AS READY")
@@ -657,6 +680,65 @@ class AppPublishingWindow(ctk.CTkToplevel):
                 message = "Upload failed: " + str(exc)
             self._preview_results.put(("upload", article.article_id if success else None, message))
         Thread(target=worker, daemon=True).start()
+
+    def _cloud_request(self, action, article_id):
+        if self._cloud_busy or self._upload_in_progress:
+            messagebox.showwarning("Supabase", "Another cloud operation is in progress.", parent=self)
+            return
+        token = os.environ.get("NEWSDESK_UPLOAD_TOKEN", "").strip()
+        if not token:
+            messagebox.showerror("Supabase", "Upload token is not configured.", parent=self)
+            return
+        self._cloud_busy = True
+        self.status_label.configure(text="Supabase " + action + " in progress...")
+        def worker():
+            try:
+                endpoint = "https://onmmfbyocbnwbqxmdthe.supabase.co/functions/v1/newsdesk-article-management"
+                body = json.dumps({"action": action, "article_id": article_id, "confirm_delete": action == "delete"}).encode("utf-8")
+                request = Request(endpoint, data=body, method="POST", headers={
+                    "Content-Type": "application/json", "Accept": "application/json",
+                    "x-newsdesk-token": token})
+                with urlopen(request, timeout=20) as response:
+                    raw = response.read(8193)
+                    if len(raw) > 8192:
+                        raise ValueError("Cloud response too large")
+                    payload = json.loads(raw.decode("utf-8"))
+                    if response.status != 200 or payload.get("article_id") != article_id:
+                        raise ValueError("Unexpected cloud response")
+                error = None
+            except Exception as exc:
+                payload = {}
+                error = "Supabase " + action + " failed: " + str(exc)
+            self._preview_results.put(("cloud", (action, article_id, payload), error))
+        Thread(target=worker, daemon=True).start()
+
+    def _check_cloud(self):
+        if not self.current_id:
+            messagebox.showinfo("Supabase", "Select an article first.", parent=self)
+            return
+        self._verified_cloud_id = None
+        self._cloud_request("check", self.current_id)
+
+    def _delete_cloud(self):
+        if not self.current_id:
+            messagebox.showinfo("Supabase", "Select an article first.", parent=self)
+            return
+        if self._verified_cloud_id != self.current_id:
+            messagebox.showwarning("Supabase", "First CHECK CLOUD STATUS to confirm the cloud article exists.", parent=self)
+            return
+        article_id = self.current_id
+        headline = self.title_entry.get().strip()
+        if not messagebox.askyesno("Permanent Supabase deletion",
+            "DELETE FROM SUPABASE?\\n\\n" + headline + "\\nID: " + article_id +
+            "\\n\\nIf published, this removes the article from the app feed. The local article remains.",
+            icon="warning", parent=self):
+            return
+        if not messagebox.askyesno("Final cloud deletion confirmation",
+            "PERMANENTLY DELETE THIS CLOUD ARTICLE? This cannot be undone here.",
+            icon="warning", parent=self):
+            return
+        self._verified_cloud_id = None
+        self._cloud_request("delete", article_id)
 
     def _test_supabase_connection(self):
         """Check the public, read-only Edge Function without credentials or article data."""
