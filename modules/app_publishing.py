@@ -18,10 +18,15 @@ import queue
 import webbrowser
 import textwrap
 import shutil
+import json
+import os
+import hashlib
+import hmac
+import getpass
 from datetime import datetime
 
 from newsdesk.app_publishing.store import AppArticleStore
-from newsdesk.app_publishing.mobile_payload import write_export
+from newsdesk.app_publishing.mobile_payload import write_export, ready_payload
 from newsdesk.app_publishing.areas import available_areas
 
 BG = "#0f172a"
@@ -46,6 +51,7 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._preview_image = None
         self._preview_results = queue.Queue()
         self._preview_status = 'Idle'
+        self._upload_in_progress = False
         self.search_var = ctk.StringVar()
         self.review_filter_var = ctk.StringVar(value="All")
         self.review_status = "new"
@@ -131,6 +137,8 @@ class AppPublishingWindow(ctk.CTkToplevel):
         ctk.CTkButton(controls, text="WITHDRAW (NOT CONNECTED)", state="disabled").pack(side="left")
         ctk.CTkButton(controls, text="EXPORT READY PREVIEW", command=self._export_ready_preview).pack(side="left", padx=(0, 8))
         ctk.CTkButton(controls, text="TEST SUPABASE CONNECTION", command=self._test_supabase_connection).pack(side="left", padx=(0, 8))
+        self.upload_button = ctk.CTkButton(controls, text="UPLOAD READY ARTICLE", command=self._upload_ready_article)
+        self.upload_button.pack(side="left", padx=(0, 8))
         self.status_label = ctk.CTkLabel(right, text="Select an article to edit", text_color=MUTED)
         self.status_label.pack(anchor="w", padx=14, pady=(0, 10))
 
@@ -231,6 +239,12 @@ class AppPublishingWindow(ctk.CTkToplevel):
                     token, result, error = self._preview_results.get_nowait()
                 except queue.Empty:
                     break
+                if token == "upload":
+                    self._upload_in_progress = False
+                    self.upload_button.configure(state="normal")
+                    self.status_label.configure(text=error)
+                    (messagebox.showinfo if result else messagebox.showerror)("Secure article upload", error, parent=self)
+                    continue
                 if token == "connection":
                     self.status_label.configure(text=error)
                     if result:
@@ -470,6 +484,74 @@ class AppPublishingWindow(ctk.CTkToplevel):
         self._refresh()
         self.status_label.configure(text=f"Cleared {count} App Publishing articles. Backup: {backup}")
         messagebox.showinfo("App Publishing", f"Cleared {count} articles.\\nBackup: {backup}", parent=self)
+
+    def _upload_ready_article(self):
+        """Explicit, authenticated private upload of one saved Ready article."""
+        if self._upload_in_progress:
+            return
+        if not self.current_id:
+            messagebox.showinfo("Secure article upload", "Select a Ready article first.", parent=self)
+            return
+        try:
+            article = next((a for a in self.store.load() if a.article_id == self.current_id), None)
+            if article is None or self._review_state(article) != "ready":
+                messagebox.showwarning("Secure article upload", "Only saved Ready articles can be uploaded.", parent=self)
+                return
+            if self._loaded_snapshot is None or self._editor_values() != self._loaded_snapshot:
+                messagebox.showwarning("Secure article upload", "Save your changes before uploading.", parent=self)
+                return
+            payload = ready_payload(article)
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(data) > 100000:
+                raise ValueError("Article exceeds the 100 KB upload limit.")
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Secure article upload", str(exc), parent=self)
+            return
+        token = os.environ.get("NEWSDESK_UPLOAD_TOKEN", "").strip()
+        if not token:
+            messagebox.showerror(
+                "Secure article upload",
+                "Upload token not configured. Set NEWSDESK_UPLOAD_TOKEN in your Windows user environment and restart NewsDesk Pro.",
+                parent=self,
+            )
+            return
+        if not messagebox.askyesno(
+            "Upload Ready article privately",
+            f"Upload this Ready article to the private Devour News database?\\n\\n{article.title}\\n\\n"
+            "This will NOT publish it or send notifications. An existing cloud record with the same article ID will be updated.",
+            parent=self,
+        ):
+            return
+        self._upload_in_progress = True
+        self.upload_button.configure(state="disabled")
+        self.status_label.configure(text="Uploading Ready article privately...")
+        def worker():
+            try:
+                endpoint = ("https://onmmfbyocbnwbqxmdthe.supabase.co"
+                            "/functions/v1/newsdesk-article-upload")
+                request = Request(endpoint, data=data, method="POST", headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "x-newsdesk-token": token,
+                })
+                with urlopen(request, timeout=20) as response:
+                    raw = response.read(8193)
+                    if len(raw) > 8192:
+                        raise ValueError("Upload response too large")
+                    result = json.loads(raw.decode("utf-8"))
+                    if (response.status != 200
+                        or result.get("status") != "stored_privately"
+                        or result.get("article_id") != article.article_id
+                        or result.get("published") is not False
+                        or result.get("notification_sent") is not False):
+                        raise ValueError("Unexpected upload confirmation")
+                success = True
+                message = "Article stored privately in Supabase. Not published; no notification sent."
+            except Exception as exc:
+                success = False
+                message = "Upload failed: " + str(exc)
+            self._preview_results.put(("upload", success, message))
+        Thread(target=worker, daemon=True).start()
 
     def _test_supabase_connection(self):
         """Check the public, read-only Edge Function without credentials or article data."""
